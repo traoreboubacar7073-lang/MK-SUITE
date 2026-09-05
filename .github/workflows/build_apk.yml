@@ -1,0 +1,45 @@
+name: Compiler l'application Android
+
+# Se déclenche automatiquement à chaque envoi de code sur la branche
+# principale, et peut aussi être lancé manuellement depuis l'onglet
+# "Actions" du dépôt GitHub (bouton "Run workflow").
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le code du projet
+        uses: actions/checkout@v4
+
+      - name: Installer Java (requis pour compiler Android)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Installer Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Vérifier l'installation
+        run: flutter doctor -v
+
+      - name: Installer les dépendances du projet
+        run: flutter pub get
+
+      - name: Compiler l'application (.apk)
+        run: flutter build apk --release
+
+      - name: Mettre le fichier .apk à disposition au téléchargement
+        uses: actions/upload-artifact@v4
+        with:
+          name: mk-suite-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30

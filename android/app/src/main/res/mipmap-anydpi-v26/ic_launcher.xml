@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icône adaptative (Android 8.0 / API 26 et plus) — le système compose
+     lui-même le fond et le premier plan selon la forme demandée par le
+     lanceur du téléphone (cercle, carré arrondi, goutte...), au lieu
+     d'utiliser une seule image carrée figée comme sur les anciennes
+     versions d'Android (toujours fournie séparément pour ces dernières,
+     voir les dossiers mipmap-*dpi/ic_launcher.png). -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

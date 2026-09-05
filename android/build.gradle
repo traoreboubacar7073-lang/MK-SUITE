@@ -1,0 +1,32 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+
+// Chaque extension (file_picker, share_plus, image_picker...) compile
+// avec sa propre valeur par défaut, indépendante de notre application,
+// et cette valeur est parfois trop basse pour ses propres dépendances
+// (androidx). On force donc ici la même version des API Android (36)
+// pour tous les modules d'extensions, une fois que chacun a fini de se
+// configurer lui-même (afterEvaluate) — c'est la méthode standard et
+// documentée pour ce cas précis.
+subprojects {
+    afterEvaluate { proj ->
+        if (proj.hasProperty("android")) {
+            proj.android {
+                compileSdkVersion 36
+            }
+        }
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

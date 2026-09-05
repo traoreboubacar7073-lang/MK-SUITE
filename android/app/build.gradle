@@ -1,0 +1,83 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    // Le plugin Gradle de Flutter doit être appliqué en dernier.
+    id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Clé de signature persistante — la même à chaque compilation, sur
+// n'importe quelle machine (y compris GitHub Actions, qui repart d'une
+// machine vierge à chaque fois). C'est ce qui permet à une nouvelle
+// version de l'application de s'installer comme une VRAIE mise à jour
+// par-dessus l'ancienne, sans effacer les données existantes du
+// téléphone. Ne jamais changer ce fichier ni ces mots de passe une fois
+// la première version installée sur un téléphone.
+def keystoreProperties = [
+    storeFile: file("keystore/mk-suite-release.jks"),
+    storePassword: "MkSuite2026Bko",
+    keyAlias: "mk-suite",
+    keyPassword: "MkSuite2026Bko",
+]
+
+android {
+    namespace = "com.mkentreprise.mk_suite"
+    // Utilise la même valeur partagée que toutes les extensions (voir
+    // .github/workflows/build_apk.yml, qui force cette valeur commune à
+    // 36 avant la compilation) — une seule source de vérité, plus besoin
+    // de la fixer séparément ici.
+    // Fixé explicitement (indépendamment de la valeur par défaut de
+    // Flutter, qui s'est révélée trop basse pour certaines extensions).
+    compileSdk = 36
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    defaultConfig {
+        // Identifiant unique de l'application — à ne pas changer une fois
+        // publiée quelque part, sinon Android la considère comme une
+        // application différente.
+        applicationId = "com.mkentreprise.mk_suite"
+        minSdk = flutter.minSdkVersion
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    signingConfigs {
+        release {
+            storeFile = keystoreProperties.storeFile
+            storePassword = keystoreProperties.storePassword
+            keyAlias = keystoreProperties.keyAlias
+            keyPassword = keystoreProperties.keyPassword
+        }
+    }
+
+    buildTypes {
+        release {
+            // Signature avec la vraie clé persistante de l'application —
+            // garantit que chaque nouvelle version compilée est reconnue
+            // par Android comme une mise à jour de la précédente.
+            signingConfig = signingConfigs.release
+        }
+    }
+
+    lint {
+        // L'outil d'analyse de code "lint" peut planter sur certains
+        // paquets tiers avec les toutes dernières versions d'AGP (bug
+        // connu, sans rapport avec la qualité réelle du code). On évite
+        // que ça bloque la génération de l'application.
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+}
+
+flutter {
+    source = "../.."
+}

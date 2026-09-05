@@ -1,0 +1,42 @@
+name: mk_suite
+description: "MK Suite — Gestion MK Entreprise (Bamako, Mali), version mobile."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # Base de données locale (tout reste sur le téléphone, aucun serveur
+  # internet requis — exactement comme la version ordinateur).
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  path_provider: ^2.1.1
+
+  # Génération de PDF (devis, factures, reçus, notes) + partage natif du
+  # téléphone (WhatsApp, email...) et impression directe.
+  pdf: ^3.10.7
+  printing: ^5.12.0
+
+  # Sauvegarde/restauration manuelle de la base de données (bouton
+  # "Sauvegarder mes données", comme sur la version ordinateur).
+  share_plus: ^7.2.2
+
+  # Client HTTP utilisé pour la synchronisation locale Wi-Fi avec la
+  # version ordinateur — le serveur local, lui, utilise uniquement
+  # dart:io (HttpServer), sans dépendance supplémentaire.
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo.png
