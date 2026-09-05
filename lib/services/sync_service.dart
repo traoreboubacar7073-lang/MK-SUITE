@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 import '../data/database.dart';
+import '../data/repository.dart' show nextNumero;
 
 /// Synchronisation locale Wi-Fi avec la version ordinateur de MK Suite.
 ///
@@ -36,7 +37,6 @@ import '../data/database.dart';
 /// indique une suppression plus récente que sa dernière modification —
 /// c'est ce qui fait qu'une suppression faite sur un appareil finit par
 /// disparaître de l'autre aussi, au prochain échange.
-library sync_service;
 
 const int syncPort = 8642;
 

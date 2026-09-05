@@ -207,7 +207,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 const SizedBox(height: 14),
                 TextField(
                   controller: _ipController,
-                  keyboardType: TextInputType.numbersPunctuation,
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
                   style: TextStyle(color: context.textPrimary, fontFamily: 'monospace'),
                   decoration: InputDecoration(
                     hintText: 'ex : 192.168.1.24',
