@@ -15,6 +15,7 @@ import 'sync_screen.dart';
 import 'rappels_screen.dart';
 import 'sauvegarde_screen.dart';
 import 'search_screen.dart';
+import '../services/notifications_service.dart';
 
 class DrawerItem {
   final String label;
@@ -96,6 +97,7 @@ class _MainShellState extends State<MainShell> {
             tooltip: 'Recherche globale',
             onPressed: _openSearch,
           ),
+          const _NotificationBell(),
           IconButton(
             icon: const Icon(Icons.sync, size: 22),
             tooltip: 'Synchronisation',
@@ -203,6 +205,125 @@ class _DrawerTile extends StatelessWidget {
       leading: IconBadge(icon: icon, color: color, size: 34),
       title: Text(label, style: TextStyle(color: context.textPrimary, fontSize: 13.5, fontWeight: FontWeight.w600)),
       onTap: onTap,
+    );
+  }
+}
+
+/// Cloche de notifications dans la barre du haut (façon Winner Style) :
+/// remplace l'ancien encart "Alertes" du tableau de bord. Un badge affiche
+/// le nombre d'alertes en cours ; un appui ouvre la liste dans une feuille
+/// coulissante et permet d'aller directement au module concerné.
+class _NotificationBell extends StatefulWidget {
+  const _NotificationBell();
+
+  @override
+  State<_NotificationBell> createState() => _NotificationBellState();
+}
+
+class _NotificationBellState extends State<_NotificationBell> {
+  List<AlertItem> _alerts = [];
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final alerts = await computeAlerts();
+    if (!mounted) return;
+    setState(() {
+      _alerts = alerts;
+      _loaded = true;
+    });
+  }
+
+  void _openPanel() async {
+    await _load();
+    if (!mounted) return;
+    await showAppBottomSheet(
+      context,
+      title: 'Notifications',
+      child: _alerts.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text('Rien à signaler pour le moment.', style: TextStyle(color: AppColors.textFaint, fontSize: 13)),
+              ),
+            )
+          : Column(
+              children: [
+                for (final a in _alerts)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => const DevisFacturesScreen()));
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: context.cardBg,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: context.cardBorder),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(color: a.color.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
+                              child: Icon(a.icon, size: 16, color: a.color),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(a.titre,
+                                      style: TextStyle(color: context.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+                                      overflow: TextOverflow.ellipsis),
+                                  Text(a.detail, style: TextStyle(color: context.textFaint, fontSize: 11.5), overflow: TextOverflow.ellipsis),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+    );
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.notifications_none_rounded, size: 22),
+          tooltip: 'Notifications',
+          onPressed: _openPanel,
+        ),
+        if (_loaded && _alerts.isNotEmpty)
+          Positioned(
+            right: 6,
+            top: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(color: AppColors.danger, borderRadius: BorderRadius.circular(999)),
+              constraints: const BoxConstraints(minWidth: 16),
+              child: Text('${_alerts.length}',
+                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+            ),
+          ),
+      ],
     );
   }
 }

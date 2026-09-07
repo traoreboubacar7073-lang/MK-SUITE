@@ -18,13 +18,15 @@ import 'employes_screen.dart';
 import 'corbeille_screen.dart';
 
 /// Tableau de bord — mirroir fidèle de modules/dashboard.py côté ordinateur :
-/// 4 indicateurs clés du mois, alertes intelligentes (factures en retard,
-/// devis qui expirent bientôt), évolution du chiffre d'affaires sur 6 mois
-/// et activité récente (dernières factures / derniers clients). La
-/// sauvegarde manuelle de la base ("Sauvegarder mes données") est reprise
-/// elle aussi, adaptée au mobile : au lieu d'un dialogue "Enregistrer sous"
-/// façon bureau, on ouvre la feuille de partage native du téléphone (vers
-/// Drive, WhatsApp, l'app Fichiers...).
+/// 4 indicateurs clés du mois, évolution du chiffre d'affaires sur 6 mois
+/// et activité récente (dernières factures / derniers clients). Les
+/// alertes intelligentes (factures en retard, devis qui expirent bientôt)
+/// sont affichées via la cloche de notifications de la barre du haut
+/// (voir main_shell.dart / services/notifications_service.dart), pas ici.
+/// La sauvegarde manuelle de la base ("Sauvegarder mes données") est
+/// reprise elle aussi, adaptée au mobile : au lieu d'un dialogue
+/// "Enregistrer sous" façon bureau, on ouvre la feuille de partage native
+/// du téléphone (vers Drive, WhatsApp, l'app Fichiers...).
 const List<String> _joursSemaine = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 const List<String> _moisNoms = [
   'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
@@ -32,29 +34,7 @@ const List<String> _moisNoms = [
 ];
 const List<String> _moisAbrev = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
 
-DateTime? _parseDate(String? s) {
-  if (s == null || s.isEmpty) return null;
-  return DateTime.tryParse(s);
-}
-
-String _fmtDateCourt(String? s) {
-  final d = _parseDate(s);
-  if (d == null) return '—';
-  return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-}
-
 String _moisKey(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}';
-
-enum _AlerteNiveau { danger, warning }
-
-class _Alerte {
-  final _AlerteNiveau niveau;
-  final IconData icon;
-  final String titre;
-  final String sousTitre;
-  final VoidCallback onTap;
-  const _Alerte({required this.niveau, required this.icon, required this.titre, required this.sousTitre, required this.onTap});
-}
 
 class _Activite {
   final IconData icon;
@@ -75,7 +55,6 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _loading = true;
   List<Client> _clients = [];
-  List<Devis> _devis = [];
   List<Facture> _factures = [];
   List<Depense> _depenses = [];
 
@@ -87,13 +66,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _load() async {
     final clients = await ClientRepository().all();
-    final devis = await DevisRepository().all();
     final factures = await FactureRepository().all();
     final depenses = await DepenseRepository().all();
     if (!mounted) return;
     setState(() {
       _clients = clients;
-      _devis = devis;
       _factures = factures;
       _depenses = depenses;
       _loading = false;
@@ -127,61 +104,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double get _facturesImpayees => _factures.where((f) => f.statut != 'Payée').fold<double>(0, (s, f) => s + f.resteAPayer);
 
   int get _nbClients => _clients.length;
-
-  Map<int, String> get _nomClientParId => {for (final c in _clients) c.id: c.nom};
-
-  /// Alertes intelligentes — mêmes règles que _build_alerts() côté
-  /// ordinateur : factures encore dues émises il y a plus de 30 jours, et
-  /// devis "En attente" dont la date limite est dépassée ou dans moins de
-  /// 7 jours. Combinées, 6 au maximum.
-  List<_Alerte> _buildAlertes() {
-    final nomClient = _nomClientParId;
-    final now = DateTime.now();
-    final seuilRetard = now.subtract(const Duration(days: 30));
-
-    final facturesRetard = _factures.where((f) {
-      final d = _parseDate(f.dateFacture);
-      return f.resteAPayer > 0 && d != null && d.isBefore(seuilRetard);
-    }).toList()
-      ..sort((a, b) => (_parseDate(a.dateFacture) ?? now).compareTo(_parseDate(b.dateFacture) ?? now));
-
-    final alertes = <_Alerte>[];
-    for (final f in facturesRetard.take(5)) {
-      final nom = nomClient[f.clientId] ?? 'Client ?';
-      alertes.add(_Alerte(
-        niveau: _AlerteNiveau.danger,
-        icon: Icons.error_outline,
-        titre: 'Facture ${f.numero} en retard',
-        sousTitre: '$nom — ${fmtFcfa(f.resteAPayer)} dus',
-        onTap: () => _push(const DevisFacturesScreen()),
-      ));
-    }
-
-    final limiteProche = now.add(const Duration(days: 7));
-    final aujourdhui = DateTime(now.year, now.month, now.day);
-    final devisProches = _devis.where((d) {
-      if (d.statut != 'En attente' || d.dateLimite == null) return false;
-      final dl = _parseDate(d.dateLimite);
-      return dl != null && !dl.isAfter(limiteProche);
-    }).toList()
-      ..sort((a, b) => (_parseDate(a.dateLimite) ?? now).compareTo(_parseDate(b.dateLimite) ?? now));
-
-    for (final d in devisProches.take(5)) {
-      final dl = _parseDate(d.dateLimite);
-      if (dl == null) continue;
-      final expire = dl.isBefore(aujourdhui);
-      final nom = nomClient[d.clientId] ?? 'Client ?';
-      alertes.add(_Alerte(
-        niveau: expire ? _AlerteNiveau.danger : _AlerteNiveau.warning,
-        icon: expire ? Icons.block : Icons.schedule,
-        titre: 'Devis ${d.numero} ${expire ? "expiré" : "expire bientôt"}',
-        sousTitre: '$nom — limite le ${_fmtDateCourt(d.dateLimite)}',
-        onTap: () => _push(const DevisFacturesScreen()),
-      ));
-    }
-
-    return alertes.take(6).toList();
-  }
 
   /// Activité récente — dernières factures puis derniers clients, comme
   /// _build_activity_feed() côté ordinateur (les deux listes étant déjà
@@ -257,7 +179,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return const Center(child: CircularProgressIndicator(color: AppColors.gold));
     }
 
-    final alertes = _buildAlertes();
     final activites = _buildActivites();
     final revenus = _revenus6Mois();
 
@@ -320,24 +241,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
-
-          if (alertes.isNotEmpty) ...[
-            const SizedBox(height: 22),
-            Row(
-              children: [
-                const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
-                const SizedBox(width: 8),
-                const Text('Alertes', style: TextStyle(color: AppColors.warning, fontSize: 14, fontWeight: FontWeight.w700)),
-                const SizedBox(width: 8),
-                Text('${alertes.length} point(s) à surveiller', style: TextStyle(color: context.textMuted, fontSize: 11.5)),
-              ],
-            ),
-            const SizedBox(height: 10),
-            AppCard(
-              padding: const EdgeInsets.all(10),
-              child: Column(children: [for (final a in alertes) _AlerteRow(alerte: a)]),
-            ),
-          ],
 
           const SizedBox(height: 22),
           _SectionTitle(
@@ -508,47 +411,6 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-class _AlerteRow extends StatelessWidget {
-  final _Alerte alerte;
-  const _AlerteRow({required this.alerte});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = alerte.niveau == _AlerteNiveau.danger ? AppColors.danger : AppColors.warning;
-    return InkWell(
-      onTap: alerte.onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(color: AppColors.surfaceHover, borderRadius: BorderRadius.circular(10)),
-        child: Row(
-          children: [
-            Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(color: color.withOpacity(0.16), shape: BoxShape.circle),
-              child: Icon(alerte.icon, size: 15, color: color),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(alerte.titre, style: TextStyle(color: context.textPrimary, fontSize: 12.5, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(alerte.sousTitre, style: TextStyle(color: context.textMuted, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(Icons.chevron_right, size: 16, color: context.textFaint),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _ActiviteRow extends StatelessWidget {
   final _Activite activite;
