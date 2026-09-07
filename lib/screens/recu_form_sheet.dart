@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/shared_widgets.dart';
 import '../services/pdf_service.dart';
+import '../services/whatsapp_service.dart';
 import 'paiement_form_sheet.dart' show kModesPaiement;
 
 /// Formulaire "Nouveau reçu" indépendant — reprend `_open_recu_form` côté
@@ -173,6 +174,33 @@ class _RecuDetailSheetState extends State<RecuDetailSheet> {
     }
   }
 
+  Future<void> _sendWhatsapp() async {
+    setState(() => _busy = true);
+    try {
+      final bytes = await PdfService.recuPdf(widget.recu, widget.client);
+      if (!mounted) return;
+      final telephone = widget.client?.telephone.trim() ?? '';
+      if (WhatsappService.numeroValide(telephone)) {
+        await showAppBottomSheet(
+          context,
+          title: 'Message WhatsApp',
+          child: WhatsappMessageSheet(
+            telephone: telephone,
+            messageInitial: 'Bonjour ${widget.client?.nom ?? ''}, voici votre reçu ${widget.recu.numero} d\'un montant de ${fmtFcfa(widget.recu.montantRecu)}. Merci de votre confiance — MK Entreprise.',
+            introTexte: 'Un message peut accompagner l\'envoi du reçu sur WhatsApp',
+            onOuvert: () => PdfService.share(bytes, '${widget.recu.numero}.pdf'),
+          ),
+        );
+      } else {
+        await PdfService.share(bytes, '${widget.recu.numero}.pdf');
+      }
+    } catch (_) {
+      if (mounted) showFormError(context, 'Impossible d\'envoyer ce reçu par WhatsApp.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _delete() async {
     final ok = await confirmDelete(context, nom: widget.recu.numero, typeElement: 'ce reçu');
     if (!ok) return;
@@ -213,6 +241,8 @@ class _RecuDetailSheetState extends State<RecuDetailSheet> {
           const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 8), child: CircularProgressIndicator(color: AppColors.gold)))
         else ...[
           GoldButton(label: 'Aperçu PDF', onPressed: _preview),
+          const SizedBox(height: 10),
+          WhatsappButton(onPressed: _sendWhatsapp),
           const SizedBox(height: 10),
           GhostButton(label: 'Partager', onPressed: _share),
         ],

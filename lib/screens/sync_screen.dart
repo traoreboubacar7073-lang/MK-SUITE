@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../data/database.dart';
 import '../services/sync_service.dart';
+import '../services/sync_peers_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/shared_widgets.dart';
 
@@ -26,11 +27,39 @@ class _SyncScreenState extends State<SyncScreen> {
   bool? _reachable;
   SyncLog? _lastLog;
   String? _lastError;
+  List<SyncPeer> _savedPeers = [];
 
   @override
   void initState() {
     super.initState();
     _refreshAddress();
+    _loadSavedPeers();
+  }
+
+  Future<void> _loadSavedPeers() async {
+    final peers = await SyncPeersService.charger();
+    if (!mounted) return;
+    setState(() {
+      _savedPeers = peers;
+      // Pré-remplit avec la dernière adresse utilisée avec succès, pour ne
+      // plus jamais avoir à la retaper — seulement si le champ est encore
+      // vide (on ne veut pas écraser une saisie déjà en cours).
+      if (_ipController.text.trim().isEmpty && peers.isNotEmpty) {
+        _ipController.text = peers.first.ip;
+      }
+    });
+  }
+
+  void _usePeer(String ip) {
+    setState(() {
+      _ipController.text = ip;
+      _reachable = null;
+    });
+  }
+
+  Future<void> _forgetPeer(String ip) async {
+    await SyncPeersService.supprimer(ip);
+    _loadSavedPeers();
   }
 
   Future<void> _refreshAddress() async {
@@ -72,6 +101,10 @@ class _SyncScreenState extends State<SyncScreen> {
       _checkingReach = false;
       _reachable = ok;
     });
+    if (ok) {
+      await SyncPeersService.enregistrer(host);
+      _loadSavedPeers();
+    }
   }
 
   Future<void> _synchroniser() async {
@@ -91,6 +124,8 @@ class _SyncScreenState extends State<SyncScreen> {
       if (!mounted) return;
       setState(() => _lastLog = log);
       showFormSuccess(context, 'Synchronisation terminée : ${log.inserted} ajout(s), ${log.updated} mise(s) à jour.');
+      await SyncPeersService.enregistrer(host);
+      _loadSavedPeers();
     } catch (e) {
       if (!mounted) return;
       setState(() => _lastError = "Échec de la synchronisation : vérifie que les deux appareils sont sur le même Wi-Fi et que l'autre appareil a démarré son serveur.\n\n($e)");
@@ -236,6 +271,27 @@ class _SyncScreenState extends State<SyncScreen> {
                     ),
                   ],
                 ),
+                if (_savedPeers.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Text('ADRESSES ENREGISTRÉES', style: TextStyle(color: context.textFaint, fontSize: 10.5, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final peer in _savedPeers)
+                        InputChip(
+                          label: Text(peer.ip, style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5)),
+                          labelStyle: TextStyle(color: context.textPrimary),
+                          backgroundColor: AppColors.surfaceHover,
+                          side: BorderSide(color: context.cardBorder),
+                          onPressed: () => _usePeer(peer.ip),
+                          onDeleted: () => _forgetPeer(peer.ip),
+                          deleteIconColor: context.textFaint,
+                        ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),

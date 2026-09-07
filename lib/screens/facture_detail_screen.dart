@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/shared_widgets.dart';
 import '../services/pdf_service.dart';
+import '../services/whatsapp_service.dart';
 import 'paiement_form_sheet.dart';
 
 /// Fiche détail d'une facture — montants (HT, réduction, TVA, TTC, avance,
@@ -80,6 +81,34 @@ class _FactureDetailScreenState extends State<FactureDetailScreen> {
       await PdfService.share(bytes, '${_facture.numero}.pdf');
     } catch (_) {
       if (mounted) showFormError(context, 'Impossible de partager cette facture.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _sendWhatsapp() async {
+    setState(() => _busy = true);
+    try {
+      final bytes = await PdfService.facturePdf(_facture, widget.client, _lignes);
+      if (!mounted) return;
+      final telephone = widget.client?.telephone.trim() ?? '';
+      final resteTxt = _facture.resteAPayer > 0 ? ' Reste à payer : ${fmtFcfa(_facture.resteAPayer)}.' : ' Facture soldée, merci !';
+      if (WhatsappService.numeroValide(telephone)) {
+        await showAppBottomSheet(
+          context,
+          title: 'Message WhatsApp',
+          child: WhatsappMessageSheet(
+            telephone: telephone,
+            messageInitial: 'Bonjour ${widget.client?.nom ?? ''}, voici votre facture ${_facture.numero} d\'un montant de ${fmtFcfa(_facture.montantTtc)}.$resteTxt — MK Entreprise.',
+            introTexte: 'Un message peut accompagner l\'envoi de la facture sur WhatsApp',
+            onOuvert: () => PdfService.share(bytes, '${_facture.numero}.pdf'),
+          ),
+        );
+      } else {
+        await PdfService.share(bytes, '${_facture.numero}.pdf');
+      }
+    } catch (_) {
+      if (mounted) showFormError(context, 'Impossible d\'envoyer cette facture par WhatsApp.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -176,6 +205,8 @@ class _FactureDetailScreenState extends State<FactureDetailScreen> {
                       const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: CircularProgressIndicator(color: AppColors.gold)))
                     else ...[
                       GoldButton(label: 'Aperçu PDF', onPressed: _preview),
+                      const SizedBox(height: 10),
+                      WhatsappButton(onPressed: _sendWhatsapp),
                       const SizedBox(height: 10),
                       GhostButton(label: 'Partager', onPressed: _share),
                       const SizedBox(height: 14),

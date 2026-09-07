@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/shared_widgets.dart';
 import '../services/pdf_service.dart';
+import '../services/whatsapp_service.dart';
 import 'facture_detail_screen.dart';
 
 /// Fiche détail d'un devis — objet, validité, lignes, montant HT, et les
@@ -79,6 +80,33 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
       await PdfService.share(bytes, '${_devis.numero}.pdf');
     } catch (_) {
       if (mounted) showFormError(context, 'Impossible de partager ce devis.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _sendWhatsapp() async {
+    setState(() => _busy = true);
+    try {
+      final bytes = await PdfService.devisPdf(_devis, widget.client, _lignes);
+      if (!mounted) return;
+      final telephone = widget.client?.telephone.trim() ?? '';
+      if (WhatsappService.numeroValide(telephone)) {
+        await showAppBottomSheet(
+          context,
+          title: 'Message WhatsApp',
+          child: WhatsappMessageSheet(
+            telephone: telephone,
+            messageInitial: 'Bonjour ${widget.client?.nom ?? ''}, voici votre devis ${_devis.numero} d\'un montant de ${fmtFcfa(_devis.montantHt)}. Merci de votre confiance — MK Entreprise.',
+            introTexte: 'Un message peut accompagner l\'envoi du devis sur WhatsApp',
+            onOuvert: () => PdfService.share(bytes, '${_devis.numero}.pdf'),
+          ),
+        );
+      } else {
+        await PdfService.share(bytes, '${_devis.numero}.pdf');
+      }
+    } catch (_) {
+      if (mounted) showFormError(context, 'Impossible d\'envoyer ce devis par WhatsApp.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -180,6 +208,8 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
                         const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: CircularProgressIndicator(color: AppColors.gold)))
                       else ...[
                         GoldButton(label: 'Aperçu PDF', onPressed: _preview),
+                        const SizedBox(height: 10),
+                        WhatsappButton(onPressed: _sendWhatsapp),
                         const SizedBox(height: 10),
                         GhostButton(label: 'Partager', onPressed: _share),
                         const SizedBox(height: 14),

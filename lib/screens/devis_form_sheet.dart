@@ -187,6 +187,7 @@ class DevisFormSheet extends StatefulWidget {
 
 class _DevisFormSheetState extends State<DevisFormSheet> {
   final _repo = DevisRepository();
+  final _clientRepo = ClientRepository();
   final _objetCtrl = TextEditingController();
   final _validiteCtrl = TextEditingController(text: '30');
   final _linesKey = GlobalKey<LigneItemsEditorState>();
@@ -195,21 +196,48 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
   bool _saving = false;
   double _total = 0;
 
+  // "Devis rapide" : plutôt que d'obliger à créer le client au préalable
+  // depuis le module Clients, on peut taper directement son nom (et son
+  // téléphone, optionnel — utile pour l'envoi WhatsApp du PDF ensuite) ici
+  // même. Un vrai client est quand même créé en arrière-plan (avec un code
+  // CL-xxx normal) au moment d'enregistrer, pour que l'historique, la
+  // recherche et la synchronisation restent cohérents — seule l'étape du
+  // formulaire complet "Nouveau client" est court-circuitée.
+  bool _quickMode = false;
+  final _quickNomCtrl = TextEditingController();
+  final _quickTelCtrl = TextEditingController();
+
   @override
   void initState() {
     super.initState();
-    if (widget.clients.isNotEmpty) _clientId = widget.clients.first.id;
+    if (widget.clients.isNotEmpty) {
+      _clientId = widget.clients.first.id;
+    } else {
+      // Aucun client enregistré : le mode rapide est la seule façon
+      // d'avancer, on l'active donc directement plutôt que de bloquer
+      // l'utilisateur sur un menu vide.
+      _quickMode = true;
+    }
   }
 
   @override
   void dispose() {
     _objetCtrl.dispose();
     _validiteCtrl.dispose();
+    _quickNomCtrl.dispose();
+    _quickTelCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
-    if (_clientId == null) {
+    int? clientId = _clientId;
+    if (_quickMode) {
+      final nom = _quickNomCtrl.text.trim();
+      if (nom.isEmpty) {
+        showFormError(context, 'Entre le nom du client.');
+        return;
+      }
+    } else if (clientId == null) {
       showFormError(context, 'Choisis un client avant d\'enregistrer.');
       return;
     }
@@ -221,8 +249,15 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
     final validite = int.tryParse(_validiteCtrl.text.trim()) ?? 30;
     setState(() => _saving = true);
     try {
+      if (_quickMode) {
+        final client = await _clientRepo.create(
+          nom: _quickNomCtrl.text.trim(),
+          telephone: _quickTelCtrl.text.trim(),
+        );
+        clientId = client.id;
+      }
       await _repo.create(
-        clientId: _clientId!,
+        clientId: clientId!,
         objet: _objetCtrl.text.trim(),
         validiteJours: validite,
         appliquerTva: _appliquerTva,
@@ -244,14 +279,39 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
       children: [
         Text('Client *', style: TextStyle(color: context.textMuted, fontSize: 12)),
         const SizedBox(height: 6),
-        DropdownButtonFormField<int>(
-          value: _clientId,
-          dropdownColor: AppColors.surface,
-          isExpanded: true,
-          hint: Text(widget.clients.isEmpty ? 'Aucun client — ajoute-en un d\'abord' : 'Choisir…', style: TextStyle(color: context.textFaint)),
-          items: [for (final c in widget.clients) DropdownMenuItem(value: c.id, child: Text(c.nom, style: TextStyle(color: context.textPrimary), overflow: TextOverflow.ellipsis))],
-          onChanged: (v) => setState(() => _clientId = v),
-        ),
+        if (widget.clients.isNotEmpty) ...[
+          _ClientModeToggle(
+            quickMode: _quickMode,
+            onChanged: (v) => setState(() => _quickMode = v),
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (_quickMode) ...[
+          TextField(
+            controller: _quickNomCtrl,
+            decoration: const InputDecoration(hintText: 'Nom du client'),
+            textCapitalization: TextCapitalization.words,
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _quickTelCtrl,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(hintText: 'Téléphone (optionnel — utile pour l\'envoi WhatsApp)'),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Un client sera créé automatiquement (avec un code CL-xxx) — retrouvable ensuite dans le module Clients.',
+            style: TextStyle(color: context.textFaint, fontSize: 11),
+          ),
+        ] else
+          DropdownButtonFormField<int>(
+            value: _clientId,
+            dropdownColor: AppColors.surface,
+            isExpanded: true,
+            hint: Text(widget.clients.isEmpty ? 'Aucun client — ajoute-en un d\'abord' : 'Choisir…', style: TextStyle(color: context.textFaint)),
+            items: [for (final c in widget.clients) DropdownMenuItem(value: c.id, child: Text(c.nom, style: TextStyle(color: context.textPrimary), overflow: TextOverflow.ellipsis))],
+            onChanged: (v) => setState(() => _clientId = v),
+          ),
         const SizedBox(height: 14),
         Text('Objet', style: TextStyle(color: context.textMuted, fontSize: 12)),
         const SizedBox(height: 6),
@@ -282,6 +342,57 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
         const SizedBox(height: 20),
         GoldButton(label: _saving ? 'Enregistrement…' : 'Enregistrer le devis', onPressed: _saving ? () {} : _save),
       ],
+    );
+  }
+}
+
+/// Petit sélecteur à deux segments ("Client existant" / "Nouveau (rapide)")
+/// — pas de widget Material tout fait qui rende bien sur le thème sombre de
+/// l'app, construit ici plutôt que d'ajouter une dépendance.
+class _ClientModeToggle extends StatelessWidget {
+  final bool quickMode;
+  final ValueChanged<bool> onChanged;
+  const _ClientModeToggle({required this.quickMode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: context.cardBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.cardBorder),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _segment(context, label: 'Client existant', selected: !quickMode, onTap: () => onChanged(false))),
+          Expanded(child: _segment(context, label: '+ Nouveau (rapide)', selected: quickMode, onTap: () => onChanged(true))),
+        ],
+      ),
+    );
+  }
+
+  Widget _segment(BuildContext context, {required String label, required bool selected, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.gold : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: selected ? Colors.black : context.textMuted,
+            fontSize: 12.5,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 }

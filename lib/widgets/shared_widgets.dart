@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../services/whatsapp_service.dart';
 
 class AppCard extends StatelessWidget {
   final Widget child;
@@ -92,6 +93,38 @@ class GhostButton extends StatelessWidget {
       child: OutlinedButton(
         onPressed: onPressed,
         child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+      ),
+    );
+  }
+}
+
+/// Bouton "Envoyer par WhatsApp" — couleur dédiée (vert WhatsApp) pour se
+/// distinguer clairement des actions dorées habituelles de l'app, utilisé
+/// sur les fiches devis/facture/reçu.
+class WhatsappButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onPressed;
+  const WhatsappButton({super.key, this.label = 'Envoyer par WhatsApp', required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF25D366),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.chat_bubble_outline, size: 19),
+            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+          ],
+        ),
       ),
     );
   }
@@ -343,6 +376,79 @@ Future<T?> showAppBottomSheet<T>(BuildContext context, {required String title, r
       );
     },
   );
+}
+
+/// Fenêtre d'envoi WhatsApp réutilisable — message pré-rédigé (modifiable)
+/// puis ouverture directe de la conversation du client. `onOuvert`, si
+/// fourni, se déclenche juste après l'ouverture réussie de WhatsApp (avant
+/// la fermeture de cette fenêtre) — utilisé pour enchaîner sur le partage
+/// natif du PDF (voir les écrans détail devis/facture/reçu), puisque
+/// WhatsApp ne permet jamais à une app tierce de joindre un fichier toute
+/// seule : l'utilisateur retape sur WhatsApp dans le sélecteur de partage
+/// qui s'ouvre juste après pour terminer l'envoi.
+class WhatsappMessageSheet extends StatefulWidget {
+  final String telephone;
+  final String messageInitial;
+  final String introTexte;
+  final VoidCallback? onOuvert;
+  const WhatsappMessageSheet({super.key, required this.telephone, required this.messageInitial, required this.introTexte, this.onOuvert});
+
+  @override
+  State<WhatsappMessageSheet> createState() => _WhatsappMessageSheetState();
+}
+
+class _WhatsappMessageSheetState extends State<WhatsappMessageSheet> {
+  late final TextEditingController _messageCtrl;
+  bool _envoi = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _messageCtrl = TextEditingController(text: widget.messageInitial);
+  }
+
+  @override
+  void dispose() {
+    _messageCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _ouvrir() async {
+    setState(() => _envoi = true);
+    final ok = await WhatsappService.ouvrirConversation(numero: widget.telephone, message: _messageCtrl.text.trim());
+    if (!mounted) return;
+    setState(() => _envoi = false);
+    if (ok) {
+      widget.onOuvert?.call();
+      Navigator.of(context).pop();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Impossible d'ouvrir WhatsApp — vérifiez que l'application est installée.")),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${widget.introTexte} (${widget.telephone}).', style: TextStyle(color: context.textFaint, fontSize: 12.5)),
+        const SizedBox(height: 14),
+        Text('Message', style: TextStyle(color: context.textMuted, fontSize: 12)),
+        const SizedBox(height: 6),
+        TextField(controller: _messageCtrl, maxLines: 5, decoration: const InputDecoration()),
+        const SizedBox(height: 18),
+        GoldButton(
+          label: _envoi ? 'Ouverture…' : (widget.onOuvert != null ? 'Ouvrir WhatsApp, puis joindre le PDF' : 'Ouvrir WhatsApp'),
+          icon: Icons.chat_bubble_outline,
+          onPressed: _envoi ? () {} : _ouvrir,
+        ),
+        const SizedBox(height: 10),
+        GhostButton(label: 'Ne pas envoyer maintenant', onPressed: () => Navigator.of(context).pop()),
+      ],
+    );
+  }
 }
 
 /// Grande icône ronde colorée avec un badge au centre — utilisée pour les

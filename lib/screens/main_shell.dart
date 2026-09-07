@@ -12,6 +12,9 @@ import 'fournisseurs_screen.dart';
 import 'employes_screen.dart';
 import 'corbeille_screen.dart';
 import 'sync_screen.dart';
+import 'rappels_screen.dart';
+import 'sauvegarde_screen.dart';
+import 'search_screen.dart';
 
 class DrawerItem {
   final String label;
@@ -27,6 +30,7 @@ class DrawerItem {
 final List<DrawerItem> drawerItems = [
   DrawerItem('Clients', Icons.people_outline, AppColors.info, (_) => const ClientsScreen()),
   DrawerItem('Devis & Factures', Icons.description_outlined, AppColors.gold, (_) => const DevisFacturesScreen()),
+  DrawerItem('Rappels impayés', Icons.notifications_active_outlined, AppColors.danger, (_) => const RappelsScreen()),
   DrawerItem('Sourcing', Icons.local_shipping_outlined, AppColors.teal, (_) => const SourcingScreen()),
   DrawerItem('Dépenses', Icons.account_balance_wallet_outlined, AppColors.danger, (_) => const DepensesScreen()),
   DrawerItem('Calcul Vitres', Icons.crop_square_outlined, AppColors.indigo, (_) => const VitresScreen()),
@@ -34,6 +38,7 @@ final List<DrawerItem> drawerItems = [
   DrawerItem('Fournisseurs', Icons.factory_outlined, AppColors.purple, (_) => const FournisseursScreen()),
   DrawerItem('Employés / Paie', Icons.badge_outlined, AppColors.pink, (_) => const EmployesScreen()),
   DrawerItem('Corbeille', Icons.delete_outline, AppColors.textFaint, (_) => const CorbeilleScreen()),
+  DrawerItem('Sauvegarde', Icons.backup_outlined, AppColors.success, (_) => const SauvegardeScreen()),
 ];
 
 class MainShell extends StatefulWidget {
@@ -51,6 +56,12 @@ class _MainShellState extends State<MainShell> {
   // plus de sa place dans le menu — pas besoin d'ouvrir le tiroir pour y
   // accéder.
   void _openSync() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncScreen()));
+
+  // Même logique : la recherche globale est la fonctionnalité la plus
+  // utilisée au quotidien (retrouver un client/devis/facture sans se
+  // souvenir du module), donc sa propre icône dans la barre du haut plutôt
+  // que seulement dans le tiroir.
+  void _openSearch() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen()));
 
   void _openDrawerItem(DrawerItem item) {
     Navigator.pop(context); // ferme le tiroir
@@ -80,6 +91,11 @@ class _MainShellState extends State<MainShell> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.search, size: 22),
+            tooltip: 'Recherche globale',
+            onPressed: _openSearch,
+          ),
           IconButton(
             icon: const Icon(Icons.sync, size: 22),
             tooltip: 'Synchronisation',

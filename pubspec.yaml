@@ -26,10 +26,21 @@ dependencies:
   # "Sauvegarder mes données", comme sur la version ordinateur).
   share_plus: ^7.2.2
 
+  # Ouvre directement une conversation WhatsApp (lien wa.me) pour l'envoi
+  # rapide d'un devis/facture/reçu — voir lib/services/whatsapp_service.dart.
+  url_launcher: ^6.2.5
+
   # Client HTTP utilisé pour la synchronisation locale Wi-Fi avec la
   # version ordinateur — le serveur local, lui, utilise uniquement
   # dart:io (HttpServer), sans dépendance supplémentaire.
   http: ^1.2.0
+
+  # Mémorise les adresses IP déjà utilisées pour la synchronisation (voir
+  # lib/services/sync_peers_service.dart), pour ne plus avoir à les
+  # retaper à chaque fois — un simple stockage clé/valeur, volontairement
+  # séparé de la base sqflite (c'est une préférence propre à CET appareil,
+  # qui n'a pas à être synchronisée avec l'autre).
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:
