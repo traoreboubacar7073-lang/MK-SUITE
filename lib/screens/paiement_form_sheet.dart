@@ -30,7 +30,6 @@ class PaiementFormSheet extends StatefulWidget {
 
 class _PaiementFormSheetState extends State<PaiementFormSheet> {
   final _factureRepo = FactureRepository();
-  final _recuRepo = RecuRepository();
   late final TextEditingController _montantCtrl;
   String _mode = kModesPaiement.first;
   bool _emettreRecu = true;
@@ -49,6 +48,7 @@ class _PaiementFormSheetState extends State<PaiementFormSheet> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final montant = double.tryParse(_montantCtrl.text.replaceAll(',', '.'));
     if (montant == null || montant <= 0) {
       showFormError(context, 'Indique un montant reçu valide.');
@@ -57,16 +57,7 @@ class _PaiementFormSheetState extends State<PaiementFormSheet> {
     setState(() => _saving = true);
     try {
       final f = widget.facture;
-      await _factureRepo.enregistrerPaiement(f, montant, _mode);
-      if (_emettreRecu && f.clientId != null) {
-        await _recuRepo.create(
-          clientId: f.clientId!,
-          factureNumero: f.numero,
-          motif: 'Paiement facture ${f.numero}',
-          montant: montant,
-          modePaiement: _mode,
-        );
-      }
+      await _factureRepo.enregistrerPaiement(f, montant, _mode, emettreRecu: _emettreRecu);
       if (!mounted) return;
       widget.onSaved();
     } catch (_) {

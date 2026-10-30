@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../data/repository.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
@@ -6,6 +7,7 @@ import '../widgets/shared_widgets.dart';
 import '../services/pdf_service.dart';
 import '../services/whatsapp_service.dart';
 import 'facture_detail_screen.dart';
+import 'devis_form_sheet.dart';
 
 /// Fiche détail d'un devis — objet, validité, lignes, montant HT, et les
 /// actions : aperçu/partage PDF, changement de statut, conversion en
@@ -13,13 +15,14 @@ import 'facture_detail_screen.dart';
 /// pour un devis "Accepté" pas déjà converti — même règle que
 /// `_show_devis_detail` côté ordinateur), suppression.
 ///
-/// Le dépôt n'offre pas de mise à jour générale du devis (objet / lignes /
-/// montant) — seulement `updateStatut` — donc, contrairement à la version
-/// ordinateur, cette fiche ne propose pas de "Modifier" au-delà du statut.
 class DevisDetailScreen extends StatefulWidget {
   final Devis devis;
   final Client? client;
-  const DevisDetailScreen({super.key, required this.devis, required this.client});
+  const DevisDetailScreen({
+    super.key,
+    required this.devis,
+    required this.client,
+  });
 
   @override
   State<DevisDetailScreen> createState() => _DevisDetailScreenState();
@@ -29,6 +32,7 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
   final _repo = DevisRepository();
   late Devis _devis;
   List<LigneDocument> _lignes = [];
+  Client? _client;
   bool _loading = true;
   bool _busy = false;
   bool _changed = false;
@@ -37,6 +41,7 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
   void initState() {
     super.initState();
     _devis = widget.devis;
+    _client = widget.client;
     _load();
   }
 
@@ -51,22 +56,55 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
         break;
       }
     }
+    final client = latest.clientId == null
+        ? null
+        : await ClientRepository().byId(latest.clientId!);
     if (!mounted) return;
     setState(() {
+      _client = client;
       _lignes = lignes;
       _devis = latest;
       _loading = false;
     });
   }
 
+  Future<void> _modifier() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final clients = await ClientRepository().all();
+      if (!mounted) return;
+      final saved = await showAppBottomSheet<bool>(
+        context,
+        title: 'Modifier ${_devis.numero}',
+        child: DevisFormSheet(
+          clients: clients,
+          devis: _devis,
+          initialLines: _lignes,
+          onSaved: () => Navigator.pop(context, true),
+        ),
+      );
+      if (saved == true) {
+        _changed = true;
+        await _load();
+      }
+    } catch (_) {
+      if (mounted)
+        showFormError(context, 'Impossible d’ouvrir la modification.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _preview() async {
     setState(() => _busy = true);
     try {
-      final bytes = await PdfService.devisPdf(_devis, widget.client, _lignes);
+      final bytes = await PdfService.devisPdf(_devis, _client, _lignes);
       if (!mounted) return;
       await PdfService.preview(bytes, 'Devis ${_devis.numero}');
     } catch (_) {
-      if (mounted) showFormError(context, 'Impossible de générer le PDF de ce devis.');
+      if (mounted)
+        showFormError(context, 'Impossible de générer le PDF de ce devis.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -75,7 +113,7 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
   Future<void> _share() async {
     setState(() => _busy = true);
     try {
-      final bytes = await PdfService.devisPdf(_devis, widget.client, _lignes);
+      final bytes = await PdfService.devisPdf(_devis, _client, _lignes);
       if (!mounted) return;
       await PdfService.share(bytes, '${_devis.numero}.pdf');
     } catch (_) {
@@ -88,17 +126,19 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
   Future<void> _sendWhatsapp() async {
     setState(() => _busy = true);
     try {
-      final bytes = await PdfService.devisPdf(_devis, widget.client, _lignes);
+      final bytes = await PdfService.devisPdf(_devis, _client, _lignes);
       if (!mounted) return;
-      final telephone = widget.client?.telephone.trim() ?? '';
+      final telephone = _client?.telephone.trim() ?? '';
       if (WhatsappService.numeroValide(telephone)) {
         await showAppBottomSheet(
           context,
           title: 'Message WhatsApp',
           child: WhatsappMessageSheet(
             telephone: telephone,
-            messageInitial: 'Bonjour ${widget.client?.nom ?? ''}, voici votre devis ${_devis.numero} d\'un montant de ${fmtFcfa(_devis.montantHt)}. Merci de votre confiance — MK Entreprise.',
-            introTexte: 'Un message peut accompagner l\'envoi du devis sur WhatsApp',
+            messageInitial:
+                'Bonjour ${_client?.nom ?? ''}, voici votre devis ${_devis.numero} d\'un montant de ${fmtFcfa(_devis.montantHt)}. Merci de votre confiance — MK Entreprise.',
+            introTexte:
+                'Un message peut accompagner l\'envoi du devis sur WhatsApp',
             onOuvert: () => PdfService.share(bytes, '${_devis.numero}.pdf'),
           ),
         );
@@ -106,7 +146,8 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
         await PdfService.share(bytes, '${_devis.numero}.pdf');
       }
     } catch (_) {
-      if (mounted) showFormError(context, 'Impossible d\'envoyer ce devis par WhatsApp.');
+      if (mounted)
+        showFormError(context, 'Impossible d\'envoyer ce devis par WhatsApp.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -130,17 +171,31 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
       _changed = true;
       await _load();
       if (!mounted) return;
-      showFormSuccess(context, 'Facture ${facture.numero} créée à partir de ce devis.');
-      Navigator.push(context, MaterialPageRoute(builder: (_) => FactureDetailScreen(facture: facture, client: widget.client)));
+      showFormSuccess(
+        context,
+        'Facture ${facture.numero} créée à partir de ce devis.',
+      );
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              FactureDetailScreen(facture: facture, client: _client),
+        ),
+      );
     } catch (_) {
-      if (mounted) showFormError(context, 'Impossible de convertir ce devis en facture.');
+      if (mounted)
+        showFormError(context, 'Impossible de convertir ce devis en facture.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _delete() async {
-    final ok = await confirmDelete(context, nom: _devis.numero, typeElement: 'ce devis');
+    final ok = await confirmDelete(
+      context,
+      nom: _devis.numero,
+      typeElement: 'ce devis',
+    );
     if (!ok) return;
     await _repo.delete(_devis);
     if (!mounted) return;
@@ -152,102 +207,203 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_devis.numero),
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context, _changed)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context, _changed),
+        ),
       ),
       body: _loading
-            ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
-            : SafeArea(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(widget.client?.nom ?? 'Client non renseigné', style: TextStyle(color: context.textPrimary, fontSize: 18, fontWeight: FontWeight.w600)),
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.gold),
+            )
+          : SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _client?.nom ?? 'Client non renseigné',
+                      style: TextStyle(
+                        color: context.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    StatutBadge(statut: _devis.statut),
+                    const SizedBox(height: 16),
+                    AppCard(
+                      child: Column(
+                        children: [
+                          _infoRow(
+                            context,
+                            'Objet',
+                            _devis.objet.isEmpty ? '—' : _devis.objet,
+                          ),
+                          _infoRow(
+                            context,
+                            'Date',
+                            _devis.dateDevis.split('T').first,
+                          ),
+                          _infoRow(
+                            context,
+                            'Validité',
+                            '${_devis.validiteJours} jours',
+                          ),
+                          _infoRow(
+                            context,
+                            'Date limite',
+                            (_devis.dateLimite ?? '').split('T').first,
+                          ),
+                          _infoRow(
+                            context,
+                            'TVA',
+                            _devis.appliquerTva ? 'Oui (18%)' : 'Non',
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_lignes.isNotEmpty) ...[
+                      const SizedBox(height: 18),
+                      Text(
+                        'Contenu du devis (${_lignes.length} ligne${_lignes.length > 1 ? 's' : ''})',
+                        style: const TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                        ),
+                      ),
                       const SizedBox(height: 8),
-                      StatutBadge(statut: _devis.statut),
-                      const SizedBox(height: 16),
                       AppCard(
                         child: Column(
                           children: [
-                            _infoRow(context, 'Objet', _devis.objet.isEmpty ? '—' : _devis.objet),
-                            _infoRow(context, 'Date', _devis.dateDevis.split('T').first),
-                            _infoRow(context, 'Validité', '${_devis.validiteJours} jours'),
-                            _infoRow(context, 'Date limite', (_devis.dateLimite ?? '').split('T').first),
-                            _infoRow(context, 'TVA', _devis.appliquerTva ? 'Oui (18%)' : 'Non'),
+                            for (final l in _lignes) _ligneRow(context, l),
                           ],
                         ),
                       ),
-                      if (_lignes.isNotEmpty) ...[
-                        const SizedBox(height: 18),
-                        Text('Contenu du devis (${_lignes.length} ligne${_lignes.length > 1 ? 's' : ''})',
-                            style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 12.5)),
-                        const SizedBox(height: 8),
-                        AppCard(
-                          child: Column(
-                            children: [
-                              for (final l in _lignes) _ligneRow(context, l),
-                            ],
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 18),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        decoration: BoxDecoration(color: AppColors.gold, borderRadius: BorderRadius.circular(14)),
-                        child: Column(
-                          children: [
-                            const Text('MONTANT HT', style: TextStyle(color: AppColors.background, fontWeight: FontWeight.w700, fontSize: 11)),
-                            const SizedBox(height: 4),
-                            Text(fmtFcfa(_devis.montantHt), style: const TextStyle(color: AppColors.background, fontWeight: FontWeight.w700, fontSize: 20)),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      if (_busy)
-                        const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: CircularProgressIndicator(color: AppColors.gold)))
-                      else ...[
-                        GoldButton(label: 'Aperçu PDF', onPressed: _preview),
-                        const SizedBox(height: 10),
-                        WhatsappButton(onPressed: _sendWhatsapp),
-                        const SizedBox(height: 10),
-                        GhostButton(label: 'Partager', onPressed: _share),
-                        const SizedBox(height: 14),
-                        if (_devis.convertiFacture != null) ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
-                            decoration: BoxDecoration(color: AppColors.success.withOpacity(0.15), borderRadius: BorderRadius.circular(10), border: Border.all(color: AppColors.success.withOpacity(0.4))),
-                            child: Text('✓ Converti en ${_devis.convertiFacture}', style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.w600)),
-                          ),
-                        ] else if (_devis.statut == 'Accepté') ...[
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: _convertir,
-                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.success, foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 15)),
-                              child: const Text('Convertir en facture', style: TextStyle(fontWeight: FontWeight.w700)),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                        ],
-                        for (final s in ['En attente', 'Accepté', 'Refusé'])
-                          if (s != _devis.statut)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: GhostButton(label: 'Marquer « $s »', onPressed: () => _setStatut(s)),
-                            ),
-                        const SizedBox(height: 8),
-                        TextButton(
-                          onPressed: _delete,
-                          style: TextButton.styleFrom(foregroundColor: AppColors.danger, padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
-                          child: const Text('Supprimer ce devis', style: TextStyle(fontWeight: FontWeight.w600)),
-                        ),
-                      ],
                     ],
-                  ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        color: AppColors.gold,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Column(
+                        children: [
+                          const Text(
+                            'MONTANT HT',
+                            style: TextStyle(
+                              color: AppColors.background,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            fmtFcfa(_devis.montantHt),
+                            style: const TextStyle(
+                              color: AppColors.background,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 20,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    if (_busy)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 10),
+                          child: CircularProgressIndicator(
+                            color: AppColors.gold,
+                          ),
+                        ),
+                      )
+                    else ...[
+                      if (_devis.convertiFacture == null) ...[
+                        GoldButton(
+                          label: 'Modifier le devis',
+                          onPressed: _modifier,
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      GoldButton(label: 'Aperçu PDF', onPressed: _preview),
+                      const SizedBox(height: 10),
+                      WhatsappButton(onPressed: _sendWhatsapp),
+                      const SizedBox(height: 10),
+                      GhostButton(label: 'Partager', onPressed: _share),
+                      const SizedBox(height: 14),
+                      if (_devis.convertiFacture != null) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 12,
+                            horizontal: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.success.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: AppColors.success.withOpacity(0.4),
+                            ),
+                          ),
+                          child: Text(
+                            '✓ Converti en ${_devis.convertiFacture}',
+                            style: const TextStyle(
+                              color: AppColors.success,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ] else if (_devis.statut == 'Accepté') ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _convertir,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.success,
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(vertical: 15),
+                            ),
+                            child: const Text(
+                              'Convertir en facture',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      for (final s in ['En attente', 'Accepté', 'Refusé'])
+                        if (s != _devis.statut)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: GhostButton(
+                              label: 'Marquer « $s »',
+                              onPressed: () => _setStatut(s),
+                            ),
+                          ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _delete,
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                          padding: EdgeInsets.zero,
+                          alignment: Alignment.centerLeft,
+                        ),
+                        child: const Text(
+                          'Supprimer ce devis',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
+            ),
     );
   }
 
@@ -257,27 +413,55 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: context.textMuted, fontSize: 12.5)),
-          Flexible(child: Text(value, textAlign: TextAlign.right, style: TextStyle(color: context.textPrimary, fontSize: 12.5, fontWeight: FontWeight.w600))),
+          Text(
+            label,
+            style: TextStyle(color: context.textMuted, fontSize: 12.5),
+          ),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: context.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _ligneRow(BuildContext context, LigneDocument l) {
-    final qte = l.quantite == l.quantite.roundToDouble() ? l.quantite.toStringAsFixed(0) : l.quantite.toString();
+    final qte = l.quantite == l.quantite.roundToDouble()
+        ? l.quantite.toStringAsFixed(0)
+        : l.quantite.toString();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('$qte × ${l.description}', style: TextStyle(color: context.textPrimary, fontSize: 13)),
+          Text(
+            '$qte × ${l.description}',
+            style: TextStyle(color: context.textPrimary, fontSize: 13),
+          ),
           const SizedBox(height: 2),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${fmtFcfa(l.prixUnitaire)} / unité', style: TextStyle(color: context.textFaint, fontSize: 11)),
-              Text(fmtFcfa(l.totalLigne), style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 12)),
+              Text(
+                '${fmtFcfa(l.prixUnitaire)} / unité',
+                style: TextStyle(color: context.textFaint, fontSize: 11),
+              ),
+              Text(
+                fmtFcfa(l.totalLigne),
+                style: const TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
             ],
           ),
         ],

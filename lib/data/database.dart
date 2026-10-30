@@ -1,4 +1,5 @@
 import 'dart:math';
+
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -29,7 +30,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
   static Database? _db;
 
-  static const int schemaVersion = 1;
+  static const int schemaVersion = 3;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -44,6 +45,19 @@ class AppDatabase {
       path,
       version: schemaVersion,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            'ALTER TABLE corbeille ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0',
+          );
+          await db.execute('UPDATE corbeille SET updated_at = deleted_at');
+        }
+        if (oldVersion < 3) {
+          await db.execute(
+            "ALTER TABLE commandes_vitres ADD COLUMN repere TEXT NOT NULL DEFAULT ''",
+          );
+        }
+      },
       onCreate: (db, version) async {
         for (final stmt in _createStatements) {
           await db.execute(stmt);
@@ -194,6 +208,7 @@ class AppDatabase {
       sync_id TEXT UNIQUE,
       date_commande TEXT,
       type_vitre TEXT,
+      repere TEXT NOT NULL DEFAULT '',
       largeur REAL,
       hauteur REAL,
       quantite INTEGER,
@@ -266,7 +281,8 @@ class AppDatabase {
       donnees_json TEXT,
       date_suppression TEXT,
       deleted_at INTEGER NOT NULL DEFAULT 0,
-      restaure INTEGER NOT NULL DEFAULT 0
+      restaure INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0
     )''',
     'CREATE INDEX idx_depenses_beneficiaire ON depenses(beneficiaire)',
     'CREATE INDEX idx_depenses_categorie ON depenses(categorie)',
@@ -294,25 +310,66 @@ class AppDatabase {
       ['Eagle Alu', 'Aluminium'],
     ];
     for (final f in fournisseursPrincipaux) {
-      await db.insert('fournisseurs', {'sync_id': newSyncId(), 'nom': f[0], 'categorie_produits': f[1], 'updated_at': now});
+      await db.insert('fournisseurs', {
+        'sync_id': newSyncId(),
+        'nom': f[0],
+        'categorie_produits': f[1],
+        'updated_at': now,
+      });
     }
     const fournisseursListeComplete = [
-      'Adama', 'Alu Trader', 'Alulux', 'Apollo Fer Mali', 'Bk Holdind', 'Boto Seal',
-      'Camara Décor', 'Crochet', 'D Métal Ahmed', 'Donsen', 'EDM', 'Etasyf', 'FBF Store',
-      'Faladie', 'Fougan', 'Guinna', 'Hamari', 'Hamari Dicko', 'Kassim', 'Kone Inox',
-      'Ladji', 'Mairie', 'Metal Djitoumou', 'Q Ballayira', 'Quincaillerie Al Firdaws',
-      'Quincaillerie Sall et Fils', "Quincaillerie de l'Espoir", 'SM Distribution',
-      'Tolmali', 'Vita Lux',
+      'Adama',
+      'Alu Trader',
+      'Alulux',
+      'Apollo Fer Mali',
+      'Bk Holdind',
+      'Boto Seal',
+      'Camara Décor',
+      'Crochet',
+      'D Métal Ahmed',
+      'Donsen',
+      'EDM',
+      'Etasyf',
+      'FBF Store',
+      'Faladie',
+      'Fougan',
+      'Guinna',
+      'Hamari',
+      'Hamari Dicko',
+      'Kassim',
+      'Kone Inox',
+      'Ladji',
+      'Mairie',
+      'Metal Djitoumou',
+      'Q Ballayira',
+      'Quincaillerie Al Firdaws',
+      'Quincaillerie Sall et Fils',
+      "Quincaillerie de l'Espoir",
+      'SM Distribution',
+      'Tolmali',
+      'Vita Lux',
     ];
     for (final nom in fournisseursListeComplete) {
-      await db.insert('fournisseurs', {'sync_id': newSyncId(), 'nom': nom, 'updated_at': now}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await db.insert('fournisseurs', {
+        'sync_id': newSyncId(),
+        'nom': nom,
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     final tarifs = [
-      ['ANT 4mm', 9000], ['ANT 5mm', 11000], ['CLAIR 4mm', 9000],
-      ['CLAIR 5mm', 12500], ['Imprimé 5mm', 14000],
+      ['ANT 4mm', 9000],
+      ['ANT 5mm', 11000],
+      ['CLAIR 4mm', 9000],
+      ['CLAIR 5mm', 12500],
+      ['Imprimé 5mm', 14000],
     ];
     for (final t in tarifs) {
-      await db.insert('tarifs_vitres', {'sync_id': newSyncId(), 'type_vitre': t[0], 'prix_m2': t[1], 'updated_at': now});
+      await db.insert('tarifs_vitres', {
+        'sync_id': newSyncId(),
+        'type_vitre': t[0],
+        'prix_m2': t[1],
+        'updated_at': now,
+      });
     }
   }
 }
@@ -324,7 +381,7 @@ int nowMs() => DateTime.now().millisecondsSinceEpoch;
 /// Génère un identifiant unique (v4, sans dépendance externe) — utilisé
 /// comme `sync_id` pour les tables sans clé métier naturelle.
 String newSyncId() {
-  final r = Random();
+  final r = Random.secure();
   const chars = '0123456789abcdef';
   String hex(int n) => List.generate(n, (_) => chars[r.nextInt(16)]).join();
   return '${hex(8)}-${hex(4)}-4${hex(3)}-${(8 + r.nextInt(4)).toRadixString(16)}${hex(3)}-${hex(12)}';

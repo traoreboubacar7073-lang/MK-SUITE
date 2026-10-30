@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/shared_widgets.dart';
 import 'dashboard_screen.dart';
+import 'assistant_screen.dart';
 import 'clients_screen.dart';
 import 'devis_factures_screen.dart';
 import 'sourcing_screen.dart';
@@ -29,6 +30,7 @@ class DrawerItem {
 /// latérale de la version ordinateur (NAV_ITEMS dans main.py), plus
 /// "Synchronisation" qui n'existe que sur mobile.
 final List<DrawerItem> drawerItems = [
+  DrawerItem('Assistant MK', Icons.auto_awesome, AppColors.gold, (_) => const AssistantScreen()),
   DrawerItem('Clients', Icons.people_outline, AppColors.info, (_) => const ClientsScreen()),
   DrawerItem('Devis & Factures', Icons.description_outlined, AppColors.gold, (_) => const DevisFacturesScreen()),
   DrawerItem('Rappels impayés', Icons.notifications_active_outlined, AppColors.danger, (_) => const RappelsScreen()),

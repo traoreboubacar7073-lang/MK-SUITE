@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
+
 import '../data/database.dart';
+import 'document_sync_policy.dart';
 import '../data/repository.dart' show nextNumero;
 
 /// Synchronisation locale Wi-Fi avec la version ordinateur de MK Suite.
@@ -44,6 +47,7 @@ class SyncLog {
   final List<String> lines = [];
   int inserted = 0;
   int updated = 0;
+  bool hasConflicts = false;
   void add(String line) => lines.add(line);
 }
 
@@ -51,7 +55,10 @@ class SyncLog {
 // EXPORT — construit le paquet JSON envoyé à l'autre appareil.
 // ---------------------------------------------------------------------------
 
-Future<Map<String, dynamic>> exportAll(Database db) async {
+Future<Map<String, dynamic>> exportAll(Database db) =>
+    db.transaction((txn) => _exportSnapshot(txn));
+
+Future<Map<String, dynamic>> _exportSnapshot(DatabaseExecutor db) async {
   Future<List<Map<String, dynamic>>> dump(String table) async {
     final rows = await db.query(table);
     return rows.map((r) => Map<String, dynamic>.from(r)..remove('id')).toList();
@@ -65,7 +72,13 @@ Future<Map<String, dynamic>> exportAll(Database db) async {
   // d'un appareil à l'autre.
   Future<String?> syncIdOf(String table, String column, dynamic value) async {
     if (value == null) return null;
-    final rows = await db.query(table, columns: ['sync_id'], where: '$column = ?', whereArgs: [value], limit: 1);
+    final rows = await db.query(
+      table,
+      columns: ['sync_id'],
+      where: '$column = ?',
+      whereArgs: [value],
+      limit: 1,
+    );
     return rows.isEmpty ? null : rows.first['sync_id'] as String?;
   }
 
@@ -81,24 +94,36 @@ Future<Map<String, dynamic>> exportAll(Database db) async {
 
   final lignesDevis = await dump('lignes_devis');
   for (final l in lignesDevis) {
-    l['devis_sync_id_ref'] = await syncIdOf('devis', 'numero', l['devis_numero']);
+    l['devis_sync_id_ref'] = await syncIdOf(
+      'devis',
+      'numero',
+      l['devis_numero'],
+    );
   }
 
   final factures = await dump('factures');
   for (final f in factures) {
     f['client_sync_id_ref'] = await syncIdOf('clients', 'id', f['client_id']);
-    f['devis_sync_id_ref'] = f['devis_numero'] == null ? null : await syncIdOf('devis', 'numero', f['devis_numero']);
+    f['devis_sync_id_ref'] = f['devis_numero'] == null
+        ? null
+        : await syncIdOf('devis', 'numero', f['devis_numero']);
   }
 
   final lignesFacture = await dump('lignes_facture');
   for (final l in lignesFacture) {
-    l['facture_sync_id_ref'] = await syncIdOf('factures', 'numero', l['facture_numero']);
+    l['facture_sync_id_ref'] = await syncIdOf(
+      'factures',
+      'numero',
+      l['facture_numero'],
+    );
   }
 
   final recus = await dump('recus');
   for (final r in recus) {
     r['client_sync_id_ref'] = await syncIdOf('clients', 'id', r['client_id']);
-    r['facture_sync_id_ref'] = r['facture_numero'] == null ? null : await syncIdOf('factures', 'numero', r['facture_numero']);
+    r['facture_sync_id_ref'] = r['facture_numero'] == null
+        ? null
+        : await syncIdOf('factures', 'numero', r['facture_numero']);
   }
 
   final notes = await dump('notes_client');
@@ -111,29 +136,56 @@ Future<Map<String, dynamic>> exportAll(Database db) async {
 
   final vitres = await dump('commandes_vitres');
   for (final v in vitres) {
-    v['devis_sync_id_ref'] = v['devis_numero'] == null ? null : await syncIdOf('devis', 'numero', v['devis_numero']);
-    v['facture_sync_id_ref'] = v['facture_numero'] == null ? null : await syncIdOf('factures', 'numero', v['facture_numero']);
+    v['devis_sync_id_ref'] = v['devis_numero'] == null
+        ? null
+        : await syncIdOf('devis', 'numero', v['devis_numero']);
+    v['facture_sync_id_ref'] = v['facture_numero'] == null
+        ? null
+        : await syncIdOf('factures', 'numero', v['facture_numero']);
   }
 
   final sourcing = await dump('sourcing_commandes');
   for (final s in sourcing) {
-    s['fournisseur_sync_id_ref'] = await syncIdOf('fournisseurs', 'id', s['fournisseur_id']);
+    s['fournisseur_sync_id_ref'] = await syncIdOf(
+      'fournisseurs',
+      'id',
+      s['fournisseur_id'],
+    );
     s['client_sync_id_ref'] = await syncIdOf('clients', 'id', s['client_id']);
   }
 
   final paie = await dump('paie');
   for (final p in paie) {
-    p['employe_sync_id_ref'] = await syncIdOf('employes', 'id', p['employe_id']);
+    p['employe_sync_id_ref'] = await syncIdOf(
+      'employes',
+      'id',
+      p['employe_id'],
+    );
   }
 
   final corbeille = await dump('corbeille');
 
   return {
-    'app': 'mk_suite', 'version': 1, 'exported_at': nowMs(),
-    'clients': clients, 'fournisseurs': fournisseurs, 'employes': employes, 'tarifs_vitres': tarifs,
-    'devis': devis, 'lignes_devis': lignesDevis, 'factures': factures, 'lignes_facture': lignesFacture,
-    'recus': recus, 'notes_client': notes, 'depenses': depenses, 'budget_categories': budget,
-    'commandes_vitres': vitres, 'sourcing_commandes': sourcing, 'paie': paie, 'corbeille': corbeille,
+    'app': 'mk_suite',
+    'version': 2,
+    'document_lines_mode': 'snapshot',
+    'exported_at': nowMs(),
+    'clients': clients,
+    'fournisseurs': fournisseurs,
+    'employes': employes,
+    'tarifs_vitres': tarifs,
+    'devis': devis,
+    'lignes_devis': lignesDevis,
+    'factures': factures,
+    'lignes_facture': lignesFacture,
+    'recus': recus,
+    'notes_client': notes,
+    'depenses': depenses,
+    'budget_categories': budget,
+    'commandes_vitres': vitres,
+    'sourcing_commandes': sourcing,
+    'paie': paie,
+    'corbeille': corbeille,
   };
 }
 
@@ -142,6 +194,17 @@ Future<Map<String, dynamic>> exportAll(Database db) async {
 // ---------------------------------------------------------------------------
 
 Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
+  if (dump['app'] != 'mk_suite' ||
+      dump['version'] != 2 ||
+      dump['document_lines_mode'] != 'snapshot') {
+    throw StateError(
+      'Synchronisation refusée : mettez à jour les deux appareils '
+      'avec le protocole v2 (contenu complet des documents), pour éviter les doublons.',
+    );
+  }
+  for (final key in ['devis', 'lignes_devis', 'factures', 'lignes_facture']) {
+    if (dump[key] is! List) throw FormatException('Paquet incomplet : $key');
+  }
   final log = SyncLog();
 
   // Toute la fusion se fait dans UNE SEULE transaction : si une ligne pose
@@ -152,17 +215,34 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
   await rawDb.transaction((txn) async {
     final db = txn;
 
-    List<Map<String, dynamic>> rowsOf(String key) => ((dump[key] as List?) ?? []).cast<Map<String, dynamic>>();
+    List<Map<String, dynamic>> rowsOf(String key) =>
+        ((dump[key] as List?) ?? []).cast<Map<String, dynamic>>();
 
     Future<int?> localIdBySyncId(String table, String? syncId) async {
       if (syncId == null) return null;
-      final rows = await db.query(table, columns: ['id'], where: 'sync_id = ?', whereArgs: [syncId], limit: 1);
+      final rows = await db.query(
+        table,
+        columns: ['id'],
+        where: 'sync_id = ?',
+        whereArgs: [syncId],
+        limit: 1,
+      );
       return rows.isEmpty ? null : rows.first['id'] as int?;
     }
 
-    Future<String?> localNumeroBySyncId(String table, String? syncId, String numeroColumn) async {
+    Future<String?> localNumeroBySyncId(
+      String table,
+      String? syncId,
+      String numeroColumn,
+    ) async {
       if (syncId == null) return null;
-      final rows = await db.query(table, columns: [numeroColumn], where: 'sync_id = ?', whereArgs: [syncId], limit: 1);
+      final rows = await db.query(
+        table,
+        columns: [numeroColumn],
+        where: 'sync_id = ?',
+        whereArgs: [syncId],
+        limit: 1,
+      );
       return rows.isEmpty ? null : rows.first[numeroColumn] as String?;
     }
 
@@ -171,23 +251,47 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
     /// entre en collision avec une ligne EXISTANTE différente) ; ligne déjà
     /// connue -> mise à jour seulement si la version distante est plus
     /// récente.
-    Future<void> mergeSimple(String table, String key, {String? uniqueField, String? numeroPrefix, bool withYear = true, int width = 3}) async {
+    Future<void> mergeSimple(
+      String table,
+      String key, {
+      String? uniqueField,
+      String? numeroPrefix,
+      bool withYear = true,
+      int width = 3,
+    }) async {
       for (final r in rowsOf(key)) {
         final syncId = r['sync_id'] as String?;
         if (syncId == null || syncId.isEmpty) continue;
         final remoteUpdatedAt = (r['updated_at'] ?? 0) as int;
-        final localRows = await db.query(table, where: 'sync_id = ?', whereArgs: [syncId]);
+        final localRows = await db.query(
+          table,
+          where: 'sync_id = ?',
+          whereArgs: [syncId],
+        );
         if (localRows.isEmpty) {
           final row = Map<String, dynamic>.from(r);
           row.removeWhere((k, _) => k.endsWith('_sync_id_ref'));
           if (uniqueField != null && row[uniqueField] != null) {
-            final collision = await db.query(table, where: '$uniqueField = ?', whereArgs: [row[uniqueField]]);
+            final collision = await db.query(
+              table,
+              where: '$uniqueField = ?',
+              whereArgs: [row[uniqueField]],
+            );
             if (collision.isNotEmpty) {
               final ancien = row[uniqueField];
               row[uniqueField] = numeroPrefix != null
-                  ? await nextNumero(db, numeroPrefix, table, column: uniqueField, withYear: withYear, width: width)
+                  ? await nextNumero(
+                      db,
+                      numeroPrefix,
+                      table,
+                      column: uniqueField,
+                      withYear: withYear,
+                      width: width,
+                    )
                   : '$ancien-2';
-              log.add('$table : "$ancien" existait déjà avec un contenu différent → renommé en "${row[uniqueField]}".');
+              log.add(
+                '$table : "$ancien" existait déjà avec un contenu différent → renommé en "${row[uniqueField]}".',
+              );
             }
           }
           await db.insert(table, row);
@@ -198,7 +302,12 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
             final row = Map<String, dynamic>.from(r);
             row.removeWhere((k, _) => k.endsWith('_sync_id_ref'));
             row.remove('sync_id');
-            await db.update(table, row, where: 'sync_id = ?', whereArgs: [syncId]);
+            await db.update(
+              table,
+              row,
+              where: 'sync_id = ?',
+              whereArgs: [syncId],
+            );
             log.updated++;
           }
         }
@@ -229,7 +338,8 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
         for (final fkColumn in fkToRefTable.keys) {
           final refTable = fkToRefTable[fkColumn]!;
           final refKeyField = fkToRefKey[fkColumn]!;
-          final refSyncId = row.remove(fkToRefSyncIdField[fkColumn]!) as String?;
+          final refSyncId =
+              row.remove(fkToRefSyncIdField[fkColumn]!) as String?;
           // Pas de repli sur la valeur brute distante : un identifiant/numéro
           // local à l'autre appareil n'a aucun sens ici, on préfère laisser
           // la FK vide (parent introuvable) plutôt que de pointer vers la
@@ -240,14 +350,31 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
         }
         row.removeWhere((k, _) => k.endsWith('_sync_id_ref'));
         final remoteUpdatedAt = (row['updated_at'] ?? 0) as int;
-        final localRows = await db.query(table, where: 'sync_id = ?', whereArgs: [syncId]);
+        final localRows = await db.query(
+          table,
+          where: 'sync_id = ?',
+          whereArgs: [syncId],
+        );
         if (localRows.isEmpty) {
           if (uniqueField != null && row[uniqueField] != null) {
-            final collision = await db.query(table, where: '$uniqueField = ?', whereArgs: [row[uniqueField]]);
+            final collision = await db.query(
+              table,
+              where: '$uniqueField = ?',
+              whereArgs: [row[uniqueField]],
+            );
             if (collision.isNotEmpty) {
               final ancien = row[uniqueField];
-              row[uniqueField] = numeroPrefix != null ? await nextNumero(db, numeroPrefix, table, column: uniqueField) : '$ancien-2';
-              log.add('$table : "$ancien" existait déjà avec un contenu différent → renommé en "${row[uniqueField]}".');
+              row[uniqueField] = numeroPrefix != null
+                  ? await nextNumero(
+                      db,
+                      numeroPrefix,
+                      table,
+                      column: uniqueField,
+                    )
+                  : '$ancien-2';
+              log.add(
+                '$table : "$ancien" existait déjà avec un contenu différent → renommé en "${row[uniqueField]}".',
+              );
             }
           }
           await db.insert(table, row);
@@ -256,7 +383,12 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
           final localUpdatedAt = (localRows.first['updated_at'] ?? 0) as int;
           if (remoteUpdatedAt > localUpdatedAt) {
             final updateRow = Map<String, dynamic>.from(row)..remove('sync_id');
-            await db.update(table, updateRow, where: 'sync_id = ?', whereArgs: [syncId]);
+            await db.update(
+              table,
+              updateRow,
+              where: 'sync_id = ?',
+              whereArgs: [syncId],
+            );
             log.updated++;
           }
         }
@@ -286,13 +418,22 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
         if (syncId == null || syncId.isEmpty) continue;
         final remoteUpdatedAt = (r['updated_at'] ?? 0) as int;
 
-        final bySyncId = await db.query(table, where: 'sync_id = ?', whereArgs: [syncId]);
+        final bySyncId = await db.query(
+          table,
+          where: 'sync_id = ?',
+          whereArgs: [syncId],
+        );
         if (bySyncId.isNotEmpty) {
           final localUpdatedAt = (bySyncId.first['updated_at'] ?? 0) as int;
           if (remoteUpdatedAt > localUpdatedAt) {
             final row = Map<String, dynamic>.from(r)..remove('sync_id');
             row.removeWhere((k, _) => k.endsWith('_sync_id_ref'));
-            await db.update(table, row, where: 'sync_id = ?', whereArgs: [syncId]);
+            await db.update(
+              table,
+              row,
+              where: 'sync_id = ?',
+              whereArgs: [syncId],
+            );
             log.updated++;
           }
           continue;
@@ -300,7 +441,11 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
 
         final val = (r[field] as String?)?.trim();
         if (val != null && val.isNotEmpty) {
-          final byField = await db.query(table, where: '$field = ?', whereArgs: [val]);
+          final byField = await db.query(
+            table,
+            where: '$field = ?',
+            whereArgs: [val],
+          );
           if (byField.isNotEmpty) {
             final localUpdatedAt = (byField.first['updated_at'] ?? 0) as int;
             final data = <String, dynamic>{'sync_id': syncId};
@@ -309,7 +454,12 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
               row.removeWhere((k, _) => k.endsWith('_sync_id_ref'));
               data.addAll(row);
             }
-            await db.update(table, data, where: 'id = ?', whereArgs: [byField.first['id']]);
+            await db.update(
+              table,
+              data,
+              where: 'id = ?',
+              whereArgs: [byField.first['id']],
+            );
             continue;
           }
         }
@@ -321,48 +471,188 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
       }
     }
 
+    final documentPlans = <String, Map<String, DocumentSyncDecision>>{};
+    for (final config in [
+      ('devis', 'lignes_devis', 'devis_numero', 'devis_sync_id_ref'),
+      ('factures', 'lignes_facture', 'facture_numero', 'facture_sync_id_ref'),
+    ]) {
+      final plans = <String, DocumentSyncDecision>{};
+      final parents = rowsOf(config.$1);
+      final parentIds = parents.map((r) => r['sync_id']).toSet();
+      for (final line in rowsOf(config.$2)) {
+        if (!parentIds.contains(line[config.$4])) {
+          throw FormatException('Ligne sans document : ${config.$2}');
+        }
+      }
+      for (final parent in parents) {
+        final id = parent['sync_id'] as String?;
+        if (id == null || id.isEmpty)
+          throw const FormatException('Document sans identité');
+        final local = await db.query(
+          config.$1,
+          where: 'sync_id = ?',
+          whereArgs: [id],
+        );
+        final localLines = local.isEmpty
+            ? <Map<String, dynamic>>[]
+            : await db.query(
+                config.$2,
+                where: '${config.$3} = ?',
+                whereArgs: [local.first['numero']],
+              );
+        final decision = documentSyncDecision(
+          localRevision: local.isEmpty
+              ? null
+              : (local.first['updated_at'] as int? ?? 0),
+          remoteRevision: parent['updated_at'] as int? ?? 0,
+          localLines: localLines,
+          remoteLines: rowsOf(config.$2)
+              .where((l) => l[config.$4] == id)
+              .toList(),
+        );
+        plans[id] = decision;
+        if (decision == DocumentSyncDecision.conflict) {
+          log.hasConflicts = true;
+          log.add(
+            '${config.$1} ${parent['numero']} : contenus différents avec la même version. '
+            'Contenu local conservé ; vérification manuelle nécessaire.',
+          );
+        }
+      }
+      documentPlans[config.$1] = plans;
+    }
+
+    Future<void> mergeDocumentLines(
+      String parentTable,
+      String lineTable,
+      String fk,
+      String ref,
+    ) async {
+      for (final plan in documentPlans[parentTable]!.entries) {
+        if (plan.value != DocumentSyncDecision.replace) continue;
+        final numero = await localNumeroBySyncId(
+          parentTable,
+          plan.key,
+          'numero',
+        );
+        if (numero == null) throw StateError('Document parent introuvable');
+        await db.delete(lineTable, where: '$fk = ?', whereArgs: [numero]);
+        for (final incoming in rowsOf(
+          lineTable,
+        ).where((l) => l[ref] == plan.key)) {
+          final row = Map<String, dynamic>.from(incoming);
+          row.remove('id');
+          row.removeWhere((k, _) => k.endsWith('_sync_id_ref'));
+          row[fk] = numero;
+          await db.insert(lineTable, row);
+          log.inserted++;
+        }
+      }
+    }
+
     // Ordre important : les tables "parentes" d'abord, pour que la
     // résolution des références (client_sync_id_ref, etc.) trouve toujours
     // la ligne déjà fusionnée.
-    await mergeSimple('clients', 'clients', uniqueField: 'code', numeroPrefix: 'CL', withYear: false);
+    await mergeSimple(
+      'clients',
+      'clients',
+      uniqueField: 'code',
+      numeroPrefix: 'CL',
+      withYear: false,
+    );
     await mergeReference('fournisseurs', 'fournisseurs', 'nom');
-    await mergeSimple('employes', 'employes', uniqueField: 'code', numeroPrefix: 'EMP', withYear: false, width: 2);
+    await mergeSimple(
+      'employes',
+      'employes',
+      uniqueField: 'code',
+      numeroPrefix: 'EMP',
+      withYear: false,
+      width: 2,
+    );
     await mergeReference('tarifs_vitres', 'tarifs_vitres', 'type_vitre');
 
-    await mergeWithFk('devis', 'devis', {'client_id': 'clients'}, {'client_id': 'id'}, {'client_id': 'client_sync_id_ref'}, uniqueField: 'numero', numeroPrefix: 'DV');
-    await mergeWithFk('lignes_devis', 'lignes_devis', {'devis_numero': 'devis'}, {'devis_numero': 'numero'}, {'devis_numero': 'devis_sync_id_ref'});
     await mergeWithFk(
-      'factures', 'factures',
+      'devis',
+      'devis',
+      {'client_id': 'clients'},
+      {'client_id': 'id'},
+      {'client_id': 'client_sync_id_ref'},
+      uniqueField: 'numero',
+      numeroPrefix: 'DV',
+    );
+    await mergeDocumentLines(
+      'devis',
+      'lignes_devis',
+      'devis_numero',
+      'devis_sync_id_ref',
+    );
+    await mergeWithFk(
+      'factures',
+      'factures',
       {'client_id': 'clients', 'devis_numero': 'devis'},
       {'client_id': 'id', 'devis_numero': 'numero'},
       {'client_id': 'client_sync_id_ref', 'devis_numero': 'devis_sync_id_ref'},
-      uniqueField: 'numero', numeroPrefix: 'FA',
+      uniqueField: 'numero',
+      numeroPrefix: 'FA',
     );
-    await mergeWithFk('lignes_facture', 'lignes_facture', {'facture_numero': 'factures'}, {'facture_numero': 'numero'}, {'facture_numero': 'facture_sync_id_ref'});
+    await mergeDocumentLines(
+      'factures',
+      'lignes_facture',
+      'facture_numero',
+      'facture_sync_id_ref',
+    );
     await mergeWithFk(
-      'recus', 'recus',
+      'recus',
+      'recus',
       {'client_id': 'clients', 'facture_numero': 'factures'},
       {'client_id': 'id', 'facture_numero': 'numero'},
-      {'client_id': 'client_sync_id_ref', 'facture_numero': 'facture_sync_id_ref'},
-      uniqueField: 'numero', numeroPrefix: 'RC',
+      {
+        'client_id': 'client_sync_id_ref',
+        'facture_numero': 'facture_sync_id_ref',
+      },
+      uniqueField: 'numero',
+      numeroPrefix: 'RC',
     );
-    await mergeWithFk('notes_client', 'notes_client', {'client_id': 'clients'}, {'client_id': 'id'}, {'client_id': 'client_sync_id_ref'}, uniqueField: 'numero', numeroPrefix: 'NT');
+    await mergeWithFk(
+      'notes_client',
+      'notes_client',
+      {'client_id': 'clients'},
+      {'client_id': 'id'},
+      {'client_id': 'client_sync_id_ref'},
+      uniqueField: 'numero',
+      numeroPrefix: 'NT',
+    );
     await mergeSimple('depenses', 'depenses');
     await mergeSimple('budget_categories', 'budget_categories');
     await mergeWithFk(
-      'commandes_vitres', 'commandes_vitres',
+      'commandes_vitres',
+      'commandes_vitres',
       {'devis_numero': 'devis', 'facture_numero': 'factures'},
       {'devis_numero': 'numero', 'facture_numero': 'numero'},
-      {'devis_numero': 'devis_sync_id_ref', 'facture_numero': 'facture_sync_id_ref'},
+      {
+        'devis_numero': 'devis_sync_id_ref',
+        'facture_numero': 'facture_sync_id_ref',
+      },
     );
     await mergeWithFk(
-      'sourcing_commandes', 'sourcing_commandes',
+      'sourcing_commandes',
+      'sourcing_commandes',
       {'fournisseur_id': 'fournisseurs', 'client_id': 'clients'},
       {'fournisseur_id': 'id', 'client_id': 'id'},
-      {'fournisseur_id': 'fournisseur_sync_id_ref', 'client_id': 'client_sync_id_ref'},
-      uniqueField: 'numero', numeroPrefix: 'SRC',
+      {
+        'fournisseur_id': 'fournisseur_sync_id_ref',
+        'client_id': 'client_sync_id_ref',
+      },
+      uniqueField: 'numero',
+      numeroPrefix: 'SRC',
     );
-    await mergeWithFk('paie', 'paie', {'employe_id': 'employes'}, {'employe_id': 'id'}, {'employe_id': 'employe_sync_id_ref'});
+    await mergeWithFk(
+      'paie',
+      'paie',
+      {'employe_id': 'employes'},
+      {'employe_id': 'id'},
+      {'employe_id': 'employe_sync_id_ref'},
+    );
 
     // Corbeille en dernier : d'abord fusionnée comme les autres (ce qui
     // propage aussi bien une nouvelle suppression qu'une restauration —
@@ -377,10 +667,17 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
       final deletedAt = (c['deleted_at'] ?? 0) as int;
       if (origineKey == null || table == null || deletedAt == 0) continue;
       // `origine_key` est le sync_id de la ligne supprimée (voir moveToCorbeille).
-      final still = await db.query(table, where: 'sync_id = ?', whereArgs: [origineKey]);
-      if (still.isNotEmpty && ((still.first['updated_at'] ?? 0) as int) < deletedAt) {
+      final still = await db.query(
+        table,
+        where: 'sync_id = ?',
+        whereArgs: [origineKey],
+      );
+      if (still.isNotEmpty &&
+          ((still.first['updated_at'] ?? 0) as int) < deletedAt) {
         await db.delete(table, where: 'sync_id = ?', whereArgs: [origineKey]);
-        log.add('$table : ligne supprimée sur l\'autre appareil, retirée ici aussi.');
+        log.add(
+          '$table : ligne supprimée sur l\'autre appareil, retirée ici aussi.',
+        );
       }
     }
   });
@@ -415,7 +712,14 @@ class SyncServer {
           final body = await utf8.decoder.bind(request).join();
           final dump = jsonDecode(body) as Map<String, dynamic>;
           final log = await importAll(db, dump);
-          request.response.write(jsonEncode({'inserted': log.inserted, 'updated': log.updated, 'lines': log.lines}));
+          request.response.write(
+            jsonEncode({
+              'inserted': log.inserted,
+              'updated': log.updated,
+              'lines': log.lines,
+              'hasConflicts': log.hasConflicts,
+            }),
+          );
         } else {
           request.response.statusCode = HttpStatus.notFound;
         }
@@ -439,11 +743,17 @@ class SyncServer {
   /// virtuelles (loopback, VPN...).
   static Future<String?> localAddress() async {
     try {
-      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLoopback: false);
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+      );
       for (final itf in interfaces) {
         for (final addr in itf.addresses) {
           final ip = addr.address;
-          if (ip.startsWith('192.168.') || ip.startsWith('10.') || _isPrivate172(ip)) return ip;
+          if (ip.startsWith('192.168.') ||
+              ip.startsWith('10.') ||
+              _isPrivate172(ip))
+            return ip;
         }
       }
       if (interfaces.isNotEmpty && interfaces.first.addresses.isNotEmpty) {
@@ -474,7 +784,9 @@ class SyncClient {
   /// serveur).
   static Future<bool> canReach(String host, {int port = syncPort}) async {
     try {
-      final res = await http.get(Uri.parse('http://$host:$port/ping')).timeout(const Duration(seconds: 4));
+      final res = await http
+          .get(Uri.parse('http://$host:$port/ping'))
+          .timeout(const Duration(seconds: 4));
       if (res.statusCode != 200) return false;
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       return body['app'] == 'mk_suite';
@@ -487,21 +799,53 @@ class SyncClient {
   /// données et les fusionne ici, puis envoie les nôtres pour qu'il fasse
   /// de même de son côté. Retourne un résumé (ce qui a été ajouté/mis à
   /// jour ici, et les éventuels avertissements comme un numéro renommé).
-  static Future<SyncLog> syncWith(Database db, String host, {int port = syncPort}) async {
+  static Future<SyncLog> syncWith(
+    Database db,
+    String host, {
+    int port = syncPort,
+  }) async {
     final base = 'http://$host:$port';
-    final getRes = await http.get(Uri.parse('$base/export')).timeout(const Duration(seconds: 30));
+    final getRes = await http
+        .get(Uri.parse('$base/export'))
+        .timeout(const Duration(seconds: 30));
     if (getRes.statusCode != 200) {
-      throw Exception("L'autre appareil n'a pas répondu correctement (${getRes.statusCode}).");
+      throw Exception(
+        "L'autre appareil n'a pas répondu correctement (${getRes.statusCode}).",
+      );
     }
     final remoteDump = jsonDecode(getRes.body) as Map<String, dynamic>;
     final log = await importAll(db, remoteDump);
 
+    if (log.hasConflicts) {
+      log.add(
+        'Envoi suspendu : résolvez les conflits signalés avant de resynchroniser.',
+      );
+      return log;
+    }
     final localDump = await exportAll(db);
     final postRes = await http
-        .post(Uri.parse('$base/import'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(localDump))
+        .post(
+          Uri.parse('$base/import'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(localDump),
+        )
         .timeout(const Duration(seconds: 30));
     if (postRes.statusCode != 200) {
-      log.add("Nos données ont bien été reçues localement, mais l'envoi vers l'autre appareil a échoué (${postRes.statusCode}) — relance la synchronisation depuis l'un ou l'autre appareil.");
+      log.add(
+        "Nos données ont bien été reçues localement, mais l'envoi vers l'autre appareil a échoué (${postRes.statusCode}) — relance la synchronisation depuis l'un ou l'autre appareil.",
+      );
+    }
+    if (postRes.statusCode == 200) {
+      final response = jsonDecode(postRes.body) as Map<String, dynamic>;
+      if (response['hasConflicts'] == true) {
+        log.hasConflicts = true;
+        log.add(
+          'L’autre appareil signale un conflit. Vérifiez les documents avant de continuer.',
+        );
+        for (final line in (response['lines'] as List? ?? [])) {
+          log.add(line.toString());
+        }
+      }
     }
     return log;
   }
