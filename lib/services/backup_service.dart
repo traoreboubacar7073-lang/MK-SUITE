@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:sqflite/sqflite.dart';
+
 import '../data/database.dart';
 
 /// Sauvegarde et restauration complètes des données de l'application —
@@ -25,9 +27,22 @@ class BackupService {
   static const String _application = 'MK Suite';
 
   static const List<String> _tables = [
-    'clients', 'fournisseurs', 'devis', 'lignes_devis', 'factures', 'lignes_facture',
-    'recus', 'notes_client', 'depenses', 'budget_categories', 'tarifs_vitres',
-    'commandes_vitres', 'sourcing_commandes', 'employes', 'paie', 'corbeille',
+    'clients',
+    'fournisseurs',
+    'devis',
+    'lignes_devis',
+    'factures',
+    'lignes_facture',
+    'recus',
+    'notes_client',
+    'depenses',
+    'budget_categories',
+    'tarifs_vitres',
+    'commandes_vitres',
+    'sourcing_commandes',
+    'employes',
+    'paie',
+    'corbeille',
   ];
 
   static Future<Map<String, dynamic>> _exportData() async {
@@ -37,11 +52,7 @@ class BackupService {
       'dateExport': DateTime.now().toIso8601String(),
     };
     for (final table in _tables) {
-      try {
-        data[table] = await db.query(table);
-      } catch (_) {
-        data[table] = [];
-      }
+      data[table] = await db.query(table);
     }
     return data;
   }
@@ -52,10 +63,16 @@ class BackupService {
     final data = await _exportData();
     final jsonStr = const JsonEncoder.withIndent('  ').convert(data);
     final dir = await getTemporaryDirectory();
-    final horodatage = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+    final horodatage = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .split('.')
+        .first;
     final file = File('${dir.path}/mk-suite-sauvegarde-$horodatage.json');
     await file.writeAsString(jsonStr);
-    await Share.shareXFiles([XFile(file.path)], text: 'Sauvegarde MK Suite du $horodatage');
+    await Share.shareXFiles([
+      XFile(file.path),
+    ], text: 'Sauvegarde MK Suite du $horodatage');
   }
 
   /// Restaure les données à partir du contenu texte d'une sauvegarde
@@ -66,8 +83,17 @@ class BackupService {
     final texte = contenuJson.trim();
     if (texte.isEmpty) return false;
     final Map<String, dynamic> data = jsonDecode(texte) as Map<String, dynamic>;
-    if (!data.containsKey('application') || data['application'] != _application) {
-      throw const FormatException('Ce contenu ne correspond pas à une sauvegarde MK Suite.');
+    if (!data.containsKey('application') ||
+        data['application'] != _application) {
+      throw const FormatException(
+        'Ce contenu ne correspond pas à une sauvegarde MK Suite.',
+      );
+    }
+    for (final table in _tables) {
+      final rows = data[table];
+      if (rows is! List || rows.any((row) => row is! Map)) {
+        throw FormatException('Sauvegarde incomplète ou invalide : $table.');
+      }
     }
     await _restaurerDonnees(data);
     return true;
@@ -76,15 +102,13 @@ class BackupService {
   static Future<void> _restaurerDonnees(Map<String, dynamic> data) async {
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
-      for (final table in _tables) {
-        if (!data.containsKey(table)) continue;
-        final rows = data[table];
-        if (rows is! List) continue;
+      // Remove children before parents, then restore parents before children.
+      for (final table in _tables.reversed) {
         await txn.delete(table);
-        for (final row in rows) {
-          if (row is Map) {
-            await txn.insert(table, Map<String, dynamic>.from(row), conflictAlgorithm: ConflictAlgorithm.replace);
-          }
+      }
+      for (final table in _tables) {
+        for (final row in data[table] as List) {
+          await txn.insert(table, Map<String, dynamic>.from(row as Map));
         }
       }
     });

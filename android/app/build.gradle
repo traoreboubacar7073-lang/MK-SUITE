@@ -5,19 +5,13 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Clé de signature persistante — la même à chaque compilation, sur
-// n'importe quelle machine (y compris GitHub Actions, qui repart d'une
-// machine vierge à chaque fois). C'est ce qui permet à une nouvelle
-// version de l'application de s'installer comme une VRAIE mise à jour
-// par-dessus l'ancienne, sans effacer les données existantes du
-// téléphone. Ne jamais changer ce fichier ni ces mots de passe une fois
-// la première version installée sur un téléphone.
-def keystoreProperties = [
-    storeFile: file("keystore/mk-suite-release.jks"),
-    storePassword: "MkSuite2026Bko",
-    keyAlias: "mk-suite",
-    keyPassword: "MkSuite2026Bko",
-]
+// Keep the existing signing identity, but obtain credentials from the build
+// environment. Never commit keystores or passwords to the repository.
+def signingStorePath = System.getenv("MK_KEYSTORE_PATH") ?: "keystore/mk-suite-release.jks"
+def signingStorePassword = System.getenv("MK_KEYSTORE_PASSWORD")
+def signingKeyPassword = System.getenv("MK_KEY_PASSWORD")
+def signingKeyAlias = System.getenv("MK_KEY_ALIAS") ?: "mk-suite"
+def hasReleaseSigning = signingStorePassword && signingKeyPassword && file(signingStorePath).exists()
 
 android {
     namespace = "com.mkentreprise.mk_suite"
@@ -44,27 +38,32 @@ android {
         // publiée quelque part, sinon Android la considère comme une
         // application différente.
         applicationId = "com.mkentreprise.mk_suite"
-        minSdk = flutter.minSdkVersion
+        minSdk = Math.max(24, flutter.minSdkVersion)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
     signingConfigs {
-        release {
-            storeFile = keystoreProperties.storeFile
-            storePassword = keystoreProperties.storePassword
-            keyAlias = keystoreProperties.keyAlias
-            keyPassword = keystoreProperties.keyPassword
+        if (hasReleaseSigning) {
+            release {
+                storeFile = file(signingStorePath)
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+            }
         }
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-test"
+        }
         release {
-            // Signature avec la vraie clé persistante de l'application —
-            // garantit que chaque nouvelle version compilée est reconnue
-            // par Android comme une mise à jour de la précédente.
-            signingConfig = signingConfigs.release
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.release
+            }
         }
     }
 
@@ -80,4 +79,11 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// Fail explicitly instead of accidentally distributing an unsigned release.
+gradle.taskGraph.whenReady { graph ->
+    if (!hasReleaseSigning && graph.allTasks.any { it.name == "assembleRelease" || it.name == "bundleRelease" }) {
+        throw new GradleException("Release signing is not configured. Supply the existing keystore and MK signing environment variables.")
+    }
 }

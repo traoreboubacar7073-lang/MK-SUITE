@@ -1,5 +1,7 @@
 import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
+
 import 'database.dart';
 import '../models/models.dart';
 
@@ -9,10 +11,24 @@ import '../models/models.dart';
 /// `db` accepte aussi bien une `Database` qu'une `Transaction` (sync_service.dart
 /// génère des numéros/codes DANS la transaction de fusion) — `DatabaseExecutor`
 /// est l'interface commune aux deux.
-Future<String> nextNumero(DatabaseExecutor db, String prefix, String table, {String column = 'numero', bool withYear = true, int width = 3}) async {
+Future<String> nextNumero(
+  DatabaseExecutor db,
+  String prefix,
+  String table, {
+  String column = 'numero',
+  bool withYear = true,
+  int width = 3,
+}) async {
   final year = DateTime.now().year;
   final like = withYear ? '$prefix-$year-%' : '$prefix-%';
-  final rows = await db.query(table, columns: [column], where: '$column LIKE ?', whereArgs: [like], orderBy: 'id DESC', limit: 1);
+  final rows = await db.query(
+    table,
+    columns: [column],
+    where: '$column LIKE ?',
+    whereArgs: [like],
+    orderBy: 'id DESC',
+    limit: 1,
+  );
   int newNum = 1;
   if (rows.isNotEmpty) {
     final last = (rows.first[column] as String).split('-').last;
@@ -23,8 +39,20 @@ Future<String> nextNumero(DatabaseExecutor db, String prefix, String table, {Str
 }
 
 /// Code simple sans année, ex : CL-001, EMP-01.
-Future<String> nextCode(DatabaseExecutor db, String prefix, String table, {String column = 'code', int width = 3}) =>
-    nextNumero(db, prefix, table, column: column, withYear: false, width: width);
+Future<String> nextCode(
+  DatabaseExecutor db,
+  String prefix,
+  String table, {
+  String column = 'code',
+  int width = 3,
+}) => nextNumero(
+  db,
+  prefix,
+  table,
+  column: column,
+  withYear: false,
+  width: width,
+);
 
 /// Déplace un enregistrement vers la corbeille au lieu de le supprimer
 /// directement — restaurable pendant 30 jours. `origineKey` DOIT être le
@@ -45,36 +73,53 @@ Future<void> moveToCorbeille(
   String? lignesFkColumn,
   String? numeroValue,
 }) async {
-  final rows = await db.query(table, where: 'id = ?', whereArgs: [rowId]);
-  if (rows.isEmpty) return;
-  final data = Map<String, dynamic>.from(rows.first);
+  await db.transaction((txn) async {
+    final rows = await txn.query(table, where: 'id = ?', whereArgs: [rowId]);
+    if (rows.isEmpty) return;
+    final data = Map<String, dynamic>.from(rows.first);
 
-  List<Map<String, dynamic>>? lignesData;
-  if (lignesTable != null && lignesFkColumn != null && numeroValue != null) {
-    final lignes = await db.query(lignesTable, where: '$lignesFkColumn = ?', whereArgs: [numeroValue]);
-    lignesData = lignes.map((r) => Map<String, dynamic>.from(r)).toList();
-  }
+    List<Map<String, dynamic>>? lignesData;
+    if (lignesTable != null && lignesFkColumn != null && numeroValue != null) {
+      final lignes = await txn.query(
+        lignesTable,
+        where: '$lignesFkColumn = ?',
+        whereArgs: [numeroValue],
+      );
+      lignesData = lignes.map((r) => Map<String, dynamic>.from(r)).toList();
+    }
 
-  final payload = {'data': data, 'lignes': lignesData, 'lignes_table': lignesTable};
-  final now = nowMs();
-  await db.insert('corbeille', {
-    'sync_id': newSyncId(),
-    'table_origine': table,
-    'id_origine': rowId,
-    'origine_key': origineKey,
-    'libelle': libelle,
-    'module': module,
-    'donnees_json': jsonEncode(payload),
-    'date_suppression': DateTime.now().toIso8601String(),
-    'deleted_at': now,
-    'restaure': 0,
-    'updated_at': now,
+    final payload = {
+      'data': data,
+      'lignes': lignesData,
+      'lignes_table': lignesTable,
+    };
+    final now = nowMs();
+    await txn.insert('corbeille', {
+      'sync_id': newSyncId(),
+      'table_origine': table,
+      'id_origine': rowId,
+      'origine_key': origineKey,
+      'libelle': libelle,
+      'module': module,
+      'donnees_json': jsonEncode(payload),
+      'date_suppression': DateTime.now().toIso8601String(),
+      'deleted_at': now,
+      'restaure': 0,
+      'updated_at': now,
+    });
+
+    if (lignesData != null &&
+        lignesTable != null &&
+        lignesFkColumn != null &&
+        numeroValue != null) {
+      await txn.delete(
+        lignesTable,
+        where: '$lignesFkColumn = ?',
+        whereArgs: [numeroValue],
+      );
+    }
+    await txn.delete(table, where: 'id = ?', whereArgs: [rowId]);
   });
-
-  if (lignesData != null && lignesTable != null && lignesFkColumn != null && numeroValue != null) {
-    await db.delete(lignesTable, where: '$lignesFkColumn = ?', whereArgs: [numeroValue]);
-  }
-  await db.delete(table, where: 'id = ?', whereArgs: [rowId]);
 }
 
 class CorbeilleRepository {
@@ -82,7 +127,11 @@ class CorbeilleRepository {
 
   Future<List<CorbeilleItem>> all() async {
     final db = await _db;
-    final rows = await db.query('corbeille', where: 'restaure = 0', orderBy: 'date_suppression DESC');
+    final rows = await db.query(
+      'corbeille',
+      where: 'restaure = 0',
+      orderBy: 'date_suppression DESC',
+    );
     return rows.map(CorbeilleItem.fromMap).toList();
   }
 
@@ -91,40 +140,43 @@ class CorbeilleRepository {
   /// qu'une synchronisation ultérieure ne le supprime pas de nouveau.
   Future<void> restore(int corbeilleId) async {
     final db = await _db;
-    final rows = await db.query('corbeille', where: 'id = ?', whereArgs: [corbeilleId]);
-    if (rows.isEmpty) return;
-    final payload = jsonDecode(rows.first['donnees_json'] as String) as Map<String, dynamic>;
-    final data = Map<String, dynamic>.from(payload['data'] as Map);
-    final table = rows.first['table_origine'] as String;
-    data.remove('id');
-    data['updated_at'] = nowMs();
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'corbeille',
+        where: 'id = ?',
+        whereArgs: [corbeilleId],
+      );
+      if (rows.isEmpty || rows.first['restaure'] == 1) return;
+      final payload = jsonDecode(
+        rows.first['donnees_json'] as String,
+      ) as Map<String, dynamic>;
+      final data = Map<String, dynamic>.from(payload['data'] as Map);
+      final table = rows.first['table_origine'] as String;
+      data['updated_at'] = nowMs();
+      await txn.insert(table, data);
 
-    try {
-      await db.insert(table, data);
-    } on DatabaseException {
-      // Le numéro/code existe déjà (réutilisé entre-temps sur cet appareil) —
-      // on force simplement un nouvel identifiant automatique.
-      final withoutUnique = Map<String, dynamic>.from(data);
-      await db.insert(table, withoutUnique, conflictAlgorithm: ConflictAlgorithm.replace);
-    }
-
-    if (payload['lignes'] != null && payload['lignes_table'] != null) {
-      final lignesTable = payload['lignes_table'] as String;
-      for (final ligne in (payload['lignes'] as List)) {
-        final l = Map<String, dynamic>.from(ligne as Map);
-        l.remove('id');
-        l['updated_at'] = nowMs();
-        await db.insert(lignesTable, l, conflictAlgorithm: ConflictAlgorithm.replace);
+      if (payload['lignes'] != null && payload['lignes_table'] != null) {
+        final lignesTable = payload['lignes_table'] as String;
+        for (final ligne in (payload['lignes'] as List)) {
+          final l = Map<String, dynamic>.from(ligne as Map);
+          l['updated_at'] = nowMs();
+          await txn.insert(lignesTable, l);
+        }
       }
-    }
 
-    // `updated_at` doit être renouvelé ici : c'est ce qui permet à une
-    // restauration faite sur UN appareil de se propager à l'autre lors de la
-    // prochaine synchronisation (voir sync_service.dart, fusion de la table
-    // `corbeille`) — sans ça, la ligne corbeille resterait figée à son
-    // `updated_at` de suppression et le passage "restaure=1" ne serait
-    // jamais vu comme plus récent côté distant.
-    await db.update('corbeille', {'restaure': 1, 'updated_at': nowMs()}, where: 'id = ?', whereArgs: [corbeilleId]);
+      // `updated_at` doit être renouvelé ici : c'est ce qui permet à une
+      // restauration faite sur UN appareil de se propager à l'autre lors de la
+      // prochaine synchronisation (voir sync_service.dart, fusion de la table
+      // `corbeille`) — sans ça, la ligne corbeille resterait figée à son
+      // `updated_at` de suppression et le passage "restaure=1" ne serait
+      // jamais vu comme plus récent côté distant.
+      await txn.update(
+        'corbeille',
+        {'restaure': 1, 'updated_at': nowMs()},
+        where: 'id = ?',
+        whereArgs: [corbeilleId],
+      );
+    });
   }
 
   Future<void> deleteForever(int corbeilleId) async {
@@ -134,8 +186,14 @@ class CorbeilleRepository {
 
   Future<void> purgeExpired({int jours = 30}) async {
     final db = await _db;
-    final seuil = DateTime.now().subtract(Duration(days: jours)).toIso8601String();
-    await db.delete('corbeille', where: 'date_suppression < ? AND restaure = 0', whereArgs: [seuil]);
+    final seuil = DateTime.now()
+        .subtract(Duration(days: jours))
+        .toIso8601String();
+    await db.delete(
+      'corbeille',
+      where: 'date_suppression < ? AND restaure = 0',
+      whereArgs: [seuil],
+    );
   }
 }
 
@@ -154,13 +212,27 @@ class ClientRepository {
     return rows.isEmpty ? null : Client.fromMap(rows.first);
   }
 
-  Future<Client> create({required String nom, String typeClient = 'Particulier', String telephone = '', String adresse = '', String nif = ''}) async {
+  Future<Client> create({
+    required String nom,
+    String typeClient = 'Particulier',
+    String telephone = '',
+    String adresse = '',
+    String nif = '',
+  }) async {
     final db = await _db;
     final code = await nextCode(db, 'CL', 'clients');
     final now = nowMs();
     final id = await db.insert('clients', {
-      'sync_id': newSyncId(), 'code': code, 'nom': nom, 'type_client': typeClient, 'telephone': telephone, 'adresse': adresse,
-      'nif': nif, 'date_premier_contact': DateTime.now().toIso8601String(), 'statut': 'Actif', 'updated_at': now,
+      'sync_id': newSyncId(),
+      'code': code,
+      'nom': nom,
+      'type_client': typeClient,
+      'telephone': telephone,
+      'adresse': adresse,
+      'nif': nif,
+      'date_premier_contact': DateTime.now().toIso8601String(),
+      'statut': 'Actif',
+      'updated_at': now,
     });
     return (await byId(id))!;
   }
@@ -173,7 +245,14 @@ class ClientRepository {
 
   Future<void> delete(Client c) async {
     final db = await _db;
-    await moveToCorbeille(db, table: 'clients', rowId: c.id, libelle: c.nom, module: 'clients', origineKey: c.syncId);
+    await moveToCorbeille(
+      db,
+      table: 'clients',
+      rowId: c.id,
+      libelle: c.nom,
+      module: 'clients',
+      origineKey: c.syncId,
+    );
   }
 }
 
@@ -188,13 +267,29 @@ class FournisseurRepository {
 
   Future<List<String>> noms() async => (await all()).map((f) => f.nom).toList();
 
-  Future<Fournisseur> create({required String nom, String categorieProduits = '', String contact = '', String telephone = '', String adresse = ''}) async {
+  Future<Fournisseur> create({
+    required String nom,
+    String categorieProduits = '',
+    String contact = '',
+    String telephone = '',
+    String adresse = '',
+  }) async {
     final db = await _db;
     final now = nowMs();
     final id = await db.insert('fournisseurs', {
-      'sync_id': newSyncId(), 'nom': nom, 'categorie_produits': categorieProduits, 'contact': contact, 'telephone': telephone, 'adresse': adresse, 'updated_at': now,
+      'sync_id': newSyncId(),
+      'nom': nom,
+      'categorie_produits': categorieProduits,
+      'contact': contact,
+      'telephone': telephone,
+      'adresse': adresse,
+      'updated_at': now,
     });
-    final rows = await db.query('fournisseurs', where: 'id = ?', whereArgs: [id]);
+    final rows = await db.query(
+      'fournisseurs',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     return Fournisseur.fromMap(rows.first);
   }
 
@@ -206,7 +301,14 @@ class FournisseurRepository {
 
   Future<void> delete(Fournisseur f) async {
     final db = await _db;
-    await moveToCorbeille(db, table: 'fournisseurs', rowId: f.id, libelle: f.nom, module: 'fournisseurs', origineKey: f.syncId);
+    await moveToCorbeille(
+      db,
+      table: 'fournisseurs',
+      rowId: f.id,
+      libelle: f.nom,
+      module: 'fournisseurs',
+      origineKey: f.syncId,
+    );
   }
 
   /// Total des achats effectués auprès de ce fournisseur, recherché dans
@@ -214,7 +316,10 @@ class FournisseurRepository {
   /// méthode que la version ordinateur.
   Future<double> totalAchats(String nomFournisseur) async {
     final db = await _db;
-    final rows = await db.rawQuery('SELECT COALESCE(SUM(montant),0) AS total FROM depenses WHERE beneficiaire = ?', [nomFournisseur]);
+    final rows = await db.rawQuery(
+      'SELECT COALESCE(SUM(montant),0) AS total FROM depenses WHERE beneficiaire = ?',
+      [nomFournisseur],
+    );
     return (rows.first['total'] as num).toDouble();
   }
 }
@@ -230,44 +335,168 @@ class DevisRepository {
 
   Future<List<LigneDocument>> lignes(String numero) async {
     final db = await _db;
-    final rows = await db.query('lignes_devis', where: 'devis_numero = ?', whereArgs: [numero]);
-    return rows.map((m) => LigneDocument.fromMap(m, parentKeyColumn: 'devis_numero')).toList();
+    final rows = await db.query(
+      'lignes_devis',
+      where: 'devis_numero = ?',
+      whereArgs: [numero],
+    );
+    return rows
+        .map((m) => LigneDocument.fromMap(m, parentKeyColumn: 'devis_numero'))
+        .toList();
   }
 
   Future<Devis> create({
-    required int clientId, required String objet, required int validiteJours, required bool appliquerTva,
-    required List<({double quantite, String description, double prixUnitaire})> lignes,
+    required int clientId,
+    required String objet,
+    required int validiteJours,
+    required bool appliquerTva,
+    required List<({double quantite, String description, double prixUnitaire})>
+    lignes,
   }) async {
     final db = await _db;
-    final numero = await nextNumero(db, 'DV', 'devis');
-    final now = nowMs();
-    final montantHt = lignes.fold<double>(0, (s, l) => s + l.quantite * l.prixUnitaire);
-    final dateLimite = DateTime.now().add(Duration(days: validiteJours)).toIso8601String();
-    await db.insert('devis', {
-      'sync_id': newSyncId(), 'numero': numero, 'date_devis': DateTime.now().toIso8601String(), 'client_id': clientId, 'objet': objet,
-      'montant_ht': montantHt, 'statut': 'En attente', 'validite_jours': validiteJours, 'date_limite': dateLimite,
-      'converti_facture': null, 'appliquer_tva': appliquerTva ? 1 : 0, 'updated_at': now,
-    });
-    for (final l in lignes) {
-      await db.insert('lignes_devis', {
-        'sync_id': newSyncId(), 'devis_numero': numero, 'quantite': l.quantite, 'description': l.description,
-        'prix_unitaire': l.prixUnitaire, 'total_ligne': l.quantite * l.prixUnitaire, 'updated_at': now,
+    return db.transaction((txn) async {
+      final numero = await nextNumero(txn, 'DV', 'devis');
+      final now = nowMs();
+      final montantHt = lignes.fold<double>(
+        0,
+        (s, l) => s + l.quantite * l.prixUnitaire,
+      );
+      final dateLimite = DateTime.now()
+          .add(Duration(days: validiteJours))
+          .toIso8601String();
+      await txn.insert('devis', {
+        'sync_id': newSyncId(),
+        'numero': numero,
+        'date_devis': DateTime.now().toIso8601String(),
+        'client_id': clientId,
+        'objet': objet,
+        'montant_ht': montantHt,
+        'statut': 'En attente',
+        'validite_jours': validiteJours,
+        'date_limite': dateLimite,
+        'converti_facture': null,
+        'appliquer_tva': appliquerTva ? 1 : 0,
+        'updated_at': now,
       });
+      for (final l in lignes) {
+        await txn.insert('lignes_devis', {
+          'sync_id': newSyncId(),
+          'devis_numero': numero,
+          'quantite': l.quantite,
+          'description': l.description,
+          'prix_unitaire': l.prixUnitaire,
+          'total_ligne': l.quantite * l.prixUnitaire,
+          'updated_at': now,
+        });
+      }
+      final rows = await txn.query(
+        'devis',
+        where: 'numero = ?',
+        whereArgs: [numero],
+      );
+      return Devis.fromMap(rows.first);
+    });
+  }
+
+  /// Atomic snapshot update: keep the document identity, replace its content.
+  /// The parent timestamp versions the complete line set for synchronisation.
+  Future<void> update(
+    Devis devis, {
+    required int clientId,
+    required String objet,
+    required int validiteJours,
+    required bool appliquerTva,
+    required List<({double quantite, String description, double prixUnitaire})>
+    lignes,
+  }) async {
+    if (validiteJours <= 0 ||
+        lignes.isEmpty ||
+        lignes.any(
+          (l) =>
+              !l.quantite.isFinite ||
+              !l.prixUnitaire.isFinite ||
+              l.quantite <= 0 ||
+              l.prixUnitaire < 0 ||
+              l.description.trim().isEmpty,
+        )) {
+      throw ArgumentError('Lignes de devis invalides.');
     }
-    final rows = await db.query('devis', where: 'numero = ?', whereArgs: [numero]);
-    return Devis.fromMap(rows.first);
+    final db = await _db;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'devis',
+        where: 'sync_id = ?',
+        whereArgs: [devis.syncId],
+      );
+      if (rows.isEmpty) throw StateError('Devis introuvable.');
+      final current = Devis.fromMap(rows.single);
+      if (current.updatedAt != devis.updatedAt)
+        throw StateError('Devis modifié ailleurs : rechargez-le.');
+      if (current.convertiFacture != null)
+        throw StateError('Ce devis est déjà facturé.');
+      final now = nowMs() > current.updatedAt ? nowMs() : current.updatedAt + 1;
+      final date = DateTime.tryParse(current.dateDevis);
+      if (date == null) throw StateError('Date du devis invalide.');
+      await txn.update(
+        'devis',
+        {
+          'client_id': clientId,
+          'objet': objet,
+          'validite_jours': validiteJours,
+          'date_limite': date
+              .add(Duration(days: validiteJours))
+              .toIso8601String(),
+          'appliquer_tva': appliquerTva ? 1 : 0,
+          'montant_ht': lignes.fold<double>(
+            0,
+            (s, l) => s + l.quantite * l.prixUnitaire,
+          ),
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [current.id],
+      );
+      await txn.delete(
+        'lignes_devis',
+        where: 'devis_numero = ?',
+        whereArgs: [current.numero],
+      );
+      for (final l in lignes) {
+        await txn.insert('lignes_devis', {
+          'sync_id': newSyncId(),
+          'devis_numero': current.numero,
+          'quantite': l.quantite,
+          'description': l.description.trim(),
+          'prix_unitaire': l.prixUnitaire,
+          'total_ligne': l.quantite * l.prixUnitaire,
+          'updated_at': now,
+        });
+      }
+    });
   }
 
   Future<void> updateStatut(String numero, String statut) async {
     final db = await _db;
-    await db.update('devis', {'statut': statut, 'updated_at': nowMs()}, where: 'numero = ?', whereArgs: [numero]);
+    await db.update(
+      'devis',
+      {'statut': statut, 'updated_at': nowMs()},
+      where: 'numero = ?',
+      whereArgs: [numero],
+    );
   }
 
   Future<void> delete(Devis d) async {
     final db = await _db;
     await moveToCorbeille(
-      db, table: 'devis', rowId: d.id, libelle: d.numero, module: 'devis', origineKey: d.syncId,
-      lignesTable: 'lignes_devis', lignesFkColumn: 'devis_numero', numeroValue: d.numero,
+      db,
+      table: 'devis',
+      rowId: d.id,
+      libelle: d.numero,
+      module: 'devis',
+      origineKey: d.syncId,
+      lignesTable: 'lignes_devis',
+      lignesFkColumn: 'devis_numero',
+      numeroValue: d.numero,
     );
   }
 
@@ -275,28 +504,72 @@ class DevisRepository {
   /// 18% appliquée automatiquement si `appliquerTva` est vrai.
   Future<Facture> convertirEnFacture(Devis d, {int? clientIdOverride}) async {
     final db = await _db;
-    final lignesDevis = await lignes(d.numero);
-    final numero = await nextNumero(db, 'FA', 'factures');
-    final now = nowMs();
-    const tvaTaux = 0.18;
-    final montantHt = d.montantHt;
-    final tva = d.appliquerTva ? montantHt * tvaTaux : 0.0;
-    final montantTtc = montantHt + tva;
-    await db.insert('factures', {
-      'sync_id': newSyncId(), 'numero': numero, 'date_facture': DateTime.now().toIso8601String(), 'devis_numero': d.numero,
-      'client_id': clientIdOverride ?? d.clientId, 'description': d.objet, 'montant_ht': montantHt,
-      'reduction_pct': 0, 'montant_ht_net': montantHt, 'tva': tva, 'montant_ttc': montantTtc,
-      'avance_recue': 0, 'reste_a_payer': montantTtc, 'statut': 'Impayée', 'mode_paiement': '', 'updated_at': now,
-    });
-    for (final l in lignesDevis) {
-      await db.insert('lignes_facture', {
-        'sync_id': newSyncId(), 'facture_numero': numero, 'quantite': l.quantite, 'description': l.description,
-        'prix_unitaire': l.prixUnitaire, 'total_ligne': l.totalLigne, 'updated_at': now,
+    return db.transaction((txn) async {
+      final currentRows = await txn.query(
+        'devis',
+        where: 'sync_id = ?',
+        whereArgs: [d.syncId],
+      );
+      if (currentRows.isEmpty) throw StateError('Devis introuvable.');
+      final current = Devis.fromMap(currentRows.single);
+      if (current.convertiFacture != null)
+        throw StateError('Devis déjà converti.');
+      final lineRows = await txn.query(
+        'lignes_devis',
+        where: 'devis_numero = ?',
+        whereArgs: [current.numero],
+      );
+      final lignesDevis = lineRows
+          .map((m) => LigneDocument.fromMap(m, parentKeyColumn: 'devis_numero'))
+          .toList();
+      final numero = await nextNumero(txn, 'FA', 'factures');
+      final now = nowMs() > current.updatedAt ? nowMs() : current.updatedAt + 1;
+      const tvaTaux = 0.18;
+      final montantHt = current.montantHt;
+      final tva = current.appliquerTva ? montantHt * tvaTaux : 0.0;
+      final montantTtc = montantHt + tva;
+      await txn.insert('factures', {
+        'sync_id': newSyncId(),
+        'numero': numero,
+        'date_facture': DateTime.now().toIso8601String(),
+        'devis_numero': current.numero,
+        'client_id': clientIdOverride ?? current.clientId,
+        'description': current.objet,
+        'montant_ht': montantHt,
+        'reduction_pct': 0,
+        'montant_ht_net': montantHt,
+        'tva': tva,
+        'montant_ttc': montantTtc,
+        'avance_recue': 0,
+        'reste_a_payer': montantTtc,
+        'statut': 'Impayée',
+        'mode_paiement': '',
+        'updated_at': now,
       });
-    }
-    await db.update('devis', {'statut': 'Accepté', 'converti_facture': numero, 'updated_at': now}, where: 'numero = ?', whereArgs: [d.numero]);
-    final rows = await db.query('factures', where: 'numero = ?', whereArgs: [numero]);
-    return Facture.fromMap(rows.first);
+      for (final l in lignesDevis) {
+        await txn.insert('lignes_facture', {
+          'sync_id': newSyncId(),
+          'facture_numero': numero,
+          'quantite': l.quantite,
+          'description': l.description,
+          'prix_unitaire': l.prixUnitaire,
+          'total_ligne': l.totalLigne,
+          'updated_at': now,
+        });
+      }
+      await txn.update(
+        'devis',
+        {'statut': 'Accepté', 'converti_facture': numero, 'updated_at': now},
+        where: 'numero = ?',
+        whereArgs: [current.numero],
+      );
+      final rows = await txn.query(
+        'factures',
+        where: 'numero = ?',
+        whereArgs: [numero],
+      );
+      return Facture.fromMap(rows.first);
+    });
   }
 }
 
@@ -311,27 +584,86 @@ class FactureRepository {
 
   Future<List<LigneDocument>> lignes(String numero) async {
     final db = await _db;
-    final rows = await db.query('lignes_facture', where: 'facture_numero = ?', whereArgs: [numero]);
-    return rows.map((m) => LigneDocument.fromMap(m, parentKeyColumn: 'facture_numero')).toList();
+    final rows = await db.query(
+      'lignes_facture',
+      where: 'facture_numero = ?',
+      whereArgs: [numero],
+    );
+    return rows
+        .map((m) => LigneDocument.fromMap(m, parentKeyColumn: 'facture_numero'))
+        .toList();
   }
 
   /// Enregistre un paiement reçu — met à jour l'avance, le reste à payer,
   /// et le statut (Impayée / Partielle / Payée), recalculés automatiquement.
-  Future<void> enregistrerPaiement(Facture f, double montant, String modePaiement) async {
+  Future<void> enregistrerPaiement(
+    Facture f,
+    double montant,
+    String modePaiement, {
+    bool emettreRecu = false,
+  }) async {
     final db = await _db;
-    final nouvelleAvance = f.avanceRecue + montant;
-    final reste = (f.montantTtc - nouvelleAvance).clamp(0, double.infinity);
-    final statut = reste <= 0 ? 'Payée' : (nouvelleAvance > 0 ? 'Partielle' : 'Impayée');
-    await db.update('factures', {
-      'avance_recue': nouvelleAvance, 'reste_a_payer': reste, 'statut': statut, 'mode_paiement': modePaiement, 'updated_at': nowMs(),
-    }, where: 'id = ?', whereArgs: [f.id]);
+    if (!montant.isFinite || montant <= 0) {
+      throw ArgumentError('Le montant doit être positif et fini.');
+    }
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'factures',
+        where: 'id = ?',
+        whereArgs: [f.id],
+      );
+      if (rows.isEmpty) throw StateError('Facture introuvable.');
+      final current = Facture.fromMap(rows.first);
+      if (montant > current.resteAPayer) {
+        throw ArgumentError('Le paiement dépasse le reste à payer.');
+      }
+      final nouvelleAvance = current.avanceRecue + montant;
+      final reste = (current.montantTtc - nouvelleAvance).clamp(
+        0,
+        double.infinity,
+      );
+      await txn.update(
+        'factures',
+        {
+          'avance_recue': nouvelleAvance,
+          'reste_a_payer': reste,
+          'statut': reste <= 0 ? 'Payée' : 'Partielle',
+          'mode_paiement': modePaiement,
+          'updated_at': nowMs(),
+        },
+        where: 'id = ?',
+        whereArgs: [f.id],
+      );
+      if (emettreRecu && current.clientId != null) {
+        final numero = await nextNumero(txn, 'RC', 'recus');
+        await txn.insert('recus', {
+          'sync_id': newSyncId(),
+          'numero': numero,
+          'date_recu': DateTime.now().toIso8601String(),
+          'client_id': current.clientId,
+          'facture_numero': current.numero,
+          'motif': 'Paiement facture ${current.numero}',
+          'montant_recu': montant,
+          'mode_paiement': modePaiement,
+          'recu_par': '',
+          'updated_at': nowMs(),
+        });
+      }
+    });
   }
 
   Future<void> delete(Facture f) async {
     final db = await _db;
     await moveToCorbeille(
-      db, table: 'factures', rowId: f.id, libelle: f.numero, module: 'factures', origineKey: f.syncId,
-      lignesTable: 'lignes_facture', lignesFkColumn: 'facture_numero', numeroValue: f.numero,
+      db,
+      table: 'factures',
+      rowId: f.id,
+      libelle: f.numero,
+      module: 'factures',
+      origineKey: f.syncId,
+      lignesTable: 'lignes_facture',
+      lignesFkColumn: 'facture_numero',
+      numeroValue: f.numero,
     );
   }
 }
@@ -345,13 +677,28 @@ class RecuRepository {
     return rows.map(Recu.fromMap).toList();
   }
 
-  Future<Recu> create({required int clientId, String? factureNumero, required String motif, required double montant, required String modePaiement, String recuPar = ''}) async {
+  Future<Recu> create({
+    required int clientId,
+    String? factureNumero,
+    required String motif,
+    required double montant,
+    required String modePaiement,
+    String recuPar = '',
+  }) async {
     final db = await _db;
     final numero = await nextNumero(db, 'RC', 'recus');
     final now = nowMs();
     final id = await db.insert('recus', {
-      'sync_id': newSyncId(), 'numero': numero, 'date_recu': DateTime.now().toIso8601String(), 'client_id': clientId, 'facture_numero': factureNumero,
-      'motif': motif, 'montant_recu': montant, 'mode_paiement': modePaiement, 'recu_par': recuPar, 'updated_at': now,
+      'sync_id': newSyncId(),
+      'numero': numero,
+      'date_recu': DateTime.now().toIso8601String(),
+      'client_id': clientId,
+      'facture_numero': factureNumero,
+      'motif': motif,
+      'montant_recu': montant,
+      'mode_paiement': modePaiement,
+      'recu_par': recuPar,
+      'updated_at': now,
     });
     final rows = await db.query('recus', where: 'id = ?', whereArgs: [id]);
     return Recu.fromMap(rows.first);
@@ -359,7 +706,14 @@ class RecuRepository {
 
   Future<void> delete(Recu r) async {
     final db = await _db;
-    await moveToCorbeille(db, table: 'recus', rowId: r.id, libelle: r.numero, module: 'recus', origineKey: r.syncId);
+    await moveToCorbeille(
+      db,
+      table: 'recus',
+      rowId: r.id,
+      libelle: r.numero,
+      module: 'recus',
+      origineKey: r.syncId,
+    );
   }
 }
 
@@ -372,21 +726,43 @@ class NoteClientRepository {
     return rows.map(NoteClient.fromMap).toList();
   }
 
-  Future<NoteClient> create({required int clientId, required String objet, required String contenu, String redigePar = ''}) async {
+  Future<NoteClient> create({
+    required int clientId,
+    required String objet,
+    required String contenu,
+    String redigePar = '',
+  }) async {
     final db = await _db;
     final numero = await nextNumero(db, 'NT', 'notes_client');
     final now = nowMs();
     final id = await db.insert('notes_client', {
-      'sync_id': newSyncId(), 'numero': numero, 'date_note': DateTime.now().toIso8601String(), 'client_id': clientId, 'objet': objet,
-      'contenu': contenu, 'redige_par': redigePar, 'updated_at': now,
+      'sync_id': newSyncId(),
+      'numero': numero,
+      'date_note': DateTime.now().toIso8601String(),
+      'client_id': clientId,
+      'objet': objet,
+      'contenu': contenu,
+      'redige_par': redigePar,
+      'updated_at': now,
     });
-    final rows = await db.query('notes_client', where: 'id = ?', whereArgs: [id]);
+    final rows = await db.query(
+      'notes_client',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     return NoteClient.fromMap(rows.first);
   }
 
   Future<void> delete(NoteClient n) async {
     final db = await _db;
-    await moveToCorbeille(db, table: 'notes_client', rowId: n.id, libelle: n.objet, module: 'notes', origineKey: n.syncId);
+    await moveToCorbeille(
+      db,
+      table: 'notes_client',
+      rowId: n.id,
+      libelle: n.objet,
+      module: 'notes',
+      origineKey: n.syncId,
+    );
   }
 }
 
@@ -399,13 +775,27 @@ class DepenseRepository {
     return rows.map(Depense.fromMap).toList();
   }
 
-  Future<Depense> create({required String categorie, required String description, required String beneficiaire, required double montant, String modePaiement = 'Espèces', String justificatif = 'Non'}) async {
+  Future<Depense> create({
+    required String categorie,
+    required String description,
+    required String beneficiaire,
+    required double montant,
+    String modePaiement = 'Espèces',
+    String justificatif = 'Non',
+  }) async {
     final db = await _db;
     final now = nowMs();
     final syncId = newSyncId();
     final id = await db.insert('depenses', {
-      'sync_id': syncId, 'date_depense': DateTime.now().toIso8601String(), 'categorie': categorie, 'description': description,
-      'beneficiaire': beneficiaire, 'montant': montant, 'mode_paiement': modePaiement, 'justificatif': justificatif, 'updated_at': now,
+      'sync_id': syncId,
+      'date_depense': DateTime.now().toIso8601String(),
+      'categorie': categorie,
+      'description': description,
+      'beneficiaire': beneficiaire,
+      'montant': montant,
+      'mode_paiement': modePaiement,
+      'justificatif': justificatif,
+      'updated_at': now,
     });
     final rows = await db.query('depenses', where: 'id = ?', whereArgs: [id]);
     return Depense.fromMap(rows.first);
@@ -413,7 +803,14 @@ class DepenseRepository {
 
   Future<void> delete(Depense d) async {
     final db = await _db;
-    await moveToCorbeille(db, table: 'depenses', rowId: d.id, libelle: d.description, module: 'depenses', origineKey: d.syncId);
+    await moveToCorbeille(
+      db,
+      table: 'depenses',
+      rowId: d.id,
+      libelle: d.description,
+      module: 'depenses',
+      origineKey: d.syncId,
+    );
   }
 }
 
@@ -422,23 +819,51 @@ class BudgetRepository {
 
   Future<List<BudgetCategorie>> forMoisAnnee(String mois, int annee) async {
     final db = await _db;
-    final rows = await db.query('budget_categories', where: 'mois = ? AND annee = ?', whereArgs: [mois, annee]);
+    final rows = await db.query(
+      'budget_categories',
+      where: 'mois = ? AND annee = ?',
+      whereArgs: [mois, annee],
+    );
     return rows.map(BudgetCategorie.fromMap).toList();
   }
 
-  Future<void> setBudget(String categorie, String mois, int annee, double montant) async {
+  Future<void> setBudget(
+    String categorie,
+    String mois,
+    int annee,
+    double montant,
+  ) async {
     final db = await _db;
-    final existing = await db.query('budget_categories', where: 'categorie = ? AND mois = ? AND annee = ?', whereArgs: [categorie, mois, annee]);
+    final existing = await db.query(
+      'budget_categories',
+      where: 'categorie = ? AND mois = ? AND annee = ?',
+      whereArgs: [categorie, mois, annee],
+    );
     final now = nowMs();
     if (existing.isEmpty) {
-      await db.insert('budget_categories', {'sync_id': newSyncId(), 'categorie': categorie, 'mois': mois, 'annee': annee, 'budget_prevu': montant, 'updated_at': now});
+      await db.insert('budget_categories', {
+        'sync_id': newSyncId(),
+        'categorie': categorie,
+        'mois': mois,
+        'annee': annee,
+        'budget_prevu': montant,
+        'updated_at': now,
+      });
     } else {
-      await db.update('budget_categories', {'budget_prevu': montant, 'updated_at': now}, where: 'id = ?', whereArgs: [existing.first['id']]);
+      await db.update(
+        'budget_categories',
+        {'budget_prevu': montant, 'updated_at': now},
+        where: 'id = ?',
+        whereArgs: [existing.first['id']],
+      );
     }
   }
 
   /// Dépenses réelles par catégorie pour un mois/année donné.
-  Future<Map<String, double>> depensesReellesParCategorie(String mois, int annee) async {
+  Future<Map<String, double>> depensesReellesParCategorie(
+    String mois,
+    int annee,
+  ) async {
     final db = await _db;
     final debut = DateTime(annee, _moisIndex(mois) + 1, 1);
     final fin = DateTime(annee, _moisIndex(mois) + 2, 1);
@@ -446,11 +871,27 @@ class BudgetRepository {
       'SELECT categorie, COALESCE(SUM(montant),0) AS total FROM depenses WHERE date_depense >= ? AND date_depense < ? GROUP BY categorie',
       [debut.toIso8601String(), fin.toIso8601String()],
     );
-    return {for (final r in rows) (r['categorie'] as String? ?? ''): (r['total'] as num).toDouble()};
+    return {
+      for (final r in rows)
+        (r['categorie'] as String? ?? ''): (r['total'] as num).toDouble(),
+    };
   }
 
   int _moisIndex(String mois) {
-    const noms = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+    const noms = [
+      'janvier',
+      'février',
+      'mars',
+      'avril',
+      'mai',
+      'juin',
+      'juillet',
+      'août',
+      'septembre',
+      'octobre',
+      'novembre',
+      'décembre',
+    ];
     final i = noms.indexOf(mois.toLowerCase());
     return i == -1 ? 0 : i;
   }
@@ -472,11 +913,25 @@ class TarifVitreRepository {
   Future<void> upsert(String typeVitre, double prixM2) async {
     final db = await _db;
     final now = nowMs();
-    final existing = await db.query('tarifs_vitres', where: 'type_vitre = ?', whereArgs: [typeVitre]);
+    final existing = await db.query(
+      'tarifs_vitres',
+      where: 'type_vitre = ?',
+      whereArgs: [typeVitre],
+    );
     if (existing.isEmpty) {
-      await db.insert('tarifs_vitres', {'sync_id': newSyncId(), 'type_vitre': typeVitre, 'prix_m2': prixM2, 'updated_at': now});
+      await db.insert('tarifs_vitres', {
+        'sync_id': newSyncId(),
+        'type_vitre': typeVitre,
+        'prix_m2': prixM2,
+        'updated_at': now,
+      });
     } else {
-      await db.update('tarifs_vitres', {'prix_m2': prixM2, 'updated_at': now}, where: 'id = ?', whereArgs: [existing.first['id']]);
+      await db.update(
+        'tarifs_vitres',
+        {'prix_m2': prixM2, 'updated_at': now},
+        where: 'id = ?',
+        whereArgs: [existing.first['id']],
+      );
     }
   }
 
@@ -495,16 +950,36 @@ class CommandeVitreRepository {
     return rows.map(CommandeVitre.fromMap).toList();
   }
 
-  Future<CommandeVitre> create({required String typeVitre, required double largeur, required double hauteur, required int quantite, required double prixUnitaire}) async {
+  Future<CommandeVitre> create({
+    required String typeVitre,
+    String repere = '',
+    required double largeur,
+    required double hauteur,
+    required int quantite,
+    required double prixUnitaire,
+  }) async {
     final db = await _db;
     final surface = largeur * hauteur * quantite;
     final montant = surface * prixUnitaire;
     final now = nowMs();
     final id = await db.insert('commandes_vitres', {
-      'sync_id': newSyncId(), 'date_commande': DateTime.now().toIso8601String(), 'type_vitre': typeVitre, 'largeur': largeur,
-      'hauteur': hauteur, 'quantite': quantite, 'surface': surface, 'prix_unitaire': prixUnitaire, 'montant': montant, 'updated_at': now,
+      'sync_id': newSyncId(),
+      'date_commande': DateTime.now().toIso8601String(),
+      'type_vitre': typeVitre,
+      'repere': repere,
+      'largeur': largeur,
+      'hauteur': hauteur,
+      'quantite': quantite,
+      'surface': surface,
+      'prix_unitaire': prixUnitaire,
+      'montant': montant,
+      'updated_at': now,
     });
-    final rows = await db.query('commandes_vitres', where: 'id = ?', whereArgs: [id]);
+    final rows = await db.query(
+      'commandes_vitres',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     return CommandeVitre.fromMap(rows.first);
   }
 
@@ -512,8 +987,12 @@ class CommandeVitreRepository {
     final db = await _db;
     final montantTxt = c.montant.toStringAsFixed(0);
     await moveToCorbeille(
-      db, table: 'commandes_vitres', rowId: c.id,
-      libelle: 'Vitre ${c.typeVitre} ($montantTxt FCFA)', module: 'vitres', origineKey: c.syncId,
+      db,
+      table: 'commandes_vitres',
+      rowId: c.id,
+      libelle: 'Vitre ${c.typeVitre} ($montantTxt FCFA)',
+      module: 'vitres',
+      origineKey: c.syncId,
     );
   }
 }
@@ -528,35 +1007,72 @@ class SourcingRepository {
   }
 
   Future<SourcingCommande> create({
-    required int? fournisseurId, required int? clientId, required String designation, required double quantite,
-    required double prixAchatUnitaire, required double prixVenteUnitaire, String? dateLivraisonPrevue, String notes = '',
+    required int? fournisseurId,
+    required int? clientId,
+    required String designation,
+    required double quantite,
+    required double prixAchatUnitaire,
+    required double prixVenteUnitaire,
+    String? dateLivraisonPrevue,
+    String notes = '',
   }) async {
     final db = await _db;
     final numero = await nextNumero(db, 'SRC', 'sourcing_commandes');
     final now = nowMs();
     final id = await db.insert('sourcing_commandes', {
-      'sync_id': newSyncId(), 'numero': numero, 'date_commande': DateTime.now().toIso8601String(), 'fournisseur_id': fournisseurId, 'client_id': clientId,
-      'designation': designation, 'quantite': quantite, 'prix_achat_unitaire': prixAchatUnitaire, 'prix_vente_unitaire': prixVenteUnitaire,
-      'statut': 'En cours', 'date_livraison_prevue': dateLivraisonPrevue, 'notes': notes, 'updated_at': now,
+      'sync_id': newSyncId(),
+      'numero': numero,
+      'date_commande': DateTime.now().toIso8601String(),
+      'fournisseur_id': fournisseurId,
+      'client_id': clientId,
+      'designation': designation,
+      'quantite': quantite,
+      'prix_achat_unitaire': prixAchatUnitaire,
+      'prix_vente_unitaire': prixVenteUnitaire,
+      'statut': 'En cours',
+      'date_livraison_prevue': dateLivraisonPrevue,
+      'notes': notes,
+      'updated_at': now,
     });
-    final rows = await db.query('sourcing_commandes', where: 'id = ?', whereArgs: [id]);
+    final rows = await db.query(
+      'sourcing_commandes',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     return SourcingCommande.fromMap(rows.first);
   }
 
   Future<void> updateStatut(int id, String statut) async {
     final db = await _db;
-    await db.update('sourcing_commandes', {'statut': statut, 'updated_at': nowMs()}, where: 'id = ?', whereArgs: [id]);
+    await db.update(
+      'sourcing_commandes',
+      {'statut': statut, 'updated_at': nowMs()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   Future<void> update(SourcingCommande s) async {
     final db = await _db;
     final map = s.toMap()..['updated_at'] = nowMs();
-    await db.update('sourcing_commandes', map, where: 'id = ?', whereArgs: [s.id]);
+    await db.update(
+      'sourcing_commandes',
+      map,
+      where: 'id = ?',
+      whereArgs: [s.id],
+    );
   }
 
   Future<void> delete(SourcingCommande s) async {
     final db = await _db;
-    await moveToCorbeille(db, table: 'sourcing_commandes', rowId: s.id, libelle: s.numero, module: 'sourcing', origineKey: s.syncId);
+    await moveToCorbeille(
+      db,
+      table: 'sourcing_commandes',
+      rowId: s.id,
+      libelle: s.numero,
+      module: 'sourcing',
+      origineKey: s.syncId,
+    );
   }
 }
 
@@ -569,13 +1085,28 @@ class EmployeRepository {
     return rows.map(Employe.fromMap).toList();
   }
 
-  Future<Employe> create({required String nom, String poste = '', String telephone = '', String? dateEmbauche, String typeContrat = 'CDI', required double salaireMensuel}) async {
+  Future<Employe> create({
+    required String nom,
+    String poste = '',
+    String telephone = '',
+    String? dateEmbauche,
+    String typeContrat = 'CDI',
+    required double salaireMensuel,
+  }) async {
     final db = await _db;
     final code = await nextCode(db, 'EMP', 'employes', width: 2);
     final now = nowMs();
     final id = await db.insert('employes', {
-      'sync_id': newSyncId(), 'code': code, 'nom': nom, 'poste': poste, 'telephone': telephone, 'date_embauche': dateEmbauche,
-      'type_contrat': typeContrat, 'salaire_mensuel': salaireMensuel, 'statut': 'Actif', 'updated_at': now,
+      'sync_id': newSyncId(),
+      'code': code,
+      'nom': nom,
+      'poste': poste,
+      'telephone': telephone,
+      'date_embauche': dateEmbauche,
+      'type_contrat': typeContrat,
+      'salaire_mensuel': salaireMensuel,
+      'statut': 'Actif',
+      'updated_at': now,
     });
     final rows = await db.query('employes', where: 'id = ?', whereArgs: [id]);
     return Employe.fromMap(rows.first);
@@ -589,7 +1120,14 @@ class EmployeRepository {
 
   Future<void> delete(Employe e) async {
     final db = await _db;
-    await moveToCorbeille(db, table: 'employes', rowId: e.id, libelle: e.nom, module: 'employes', origineKey: e.syncId);
+    await moveToCorbeille(
+      db,
+      table: 'employes',
+      rowId: e.id,
+      libelle: e.nom,
+      module: 'employes',
+      origineKey: e.syncId,
+    );
   }
 }
 
@@ -598,7 +1136,11 @@ class PaieRepository {
 
   Future<List<Paie>> forMoisAnnee(String mois, int annee) async {
     final db = await _db;
-    final rows = await db.query('paie', where: 'mois = ? AND annee = ?', whereArgs: [mois, annee]);
+    final rows = await db.query(
+      'paie',
+      where: 'mois = ? AND annee = ?',
+      whereArgs: [mois, annee],
+    );
     return rows.map(Paie.fromMap).toList();
   }
 
@@ -606,24 +1148,50 @@ class PaieRepository {
   /// (créée avec le salaire de base si absente), puis la retourne.
   Future<Paie> ensureLigne(Employe emp, String mois, int annee) async {
     final db = await _db;
-    final existing = await db.query('paie', where: 'employe_id = ? AND mois = ? AND annee = ?', whereArgs: [emp.id, mois, annee]);
+    final existing = await db.query(
+      'paie',
+      where: 'employe_id = ? AND mois = ? AND annee = ?',
+      whereArgs: [emp.id, mois, annee],
+    );
     if (existing.isNotEmpty) return Paie.fromMap(existing.first);
     final now = nowMs();
     final id = await db.insert('paie', {
-      'sync_id': newSyncId(), 'mois': mois, 'annee': annee, 'employe_id': emp.id, 'salaire_du': emp.salaireMensuel,
-      'avances_versees': 0, 'net_a_payer': emp.salaireMensuel, 'date_paiement': null, 'mode_paiement': '', 'statut': 'En attente', 'updated_at': now,
+      'sync_id': newSyncId(),
+      'mois': mois,
+      'annee': annee,
+      'employe_id': emp.id,
+      'salaire_du': emp.salaireMensuel,
+      'avances_versees': 0,
+      'net_a_payer': emp.salaireMensuel,
+      'date_paiement': null,
+      'mode_paiement': '',
+      'statut': 'En attente',
+      'updated_at': now,
     });
     final rows = await db.query('paie', where: 'id = ?', whereArgs: [id]);
     return Paie.fromMap(rows.first);
   }
 
-  Future<void> payer(Paie p, {required double montant, required String modePaiement}) async {
+  Future<void> payer(
+    Paie p, {
+    required double montant,
+    required String modePaiement,
+  }) async {
     final db = await _db;
     final avances = p.avancesVersees + montant;
     final net = (p.salaireDu - avances).clamp(0, double.infinity);
-    await db.update('paie', {
-      'avances_versees': avances, 'net_a_payer': net, 'date_paiement': DateTime.now().toIso8601String(),
-      'mode_paiement': modePaiement, 'statut': net <= 0 ? 'Payé' : 'En attente', 'updated_at': nowMs(),
-    }, where: 'id = ?', whereArgs: [p.id]);
+    await db.update(
+      'paie',
+      {
+        'avances_versees': avances,
+        'net_a_payer': net,
+        'date_paiement': DateTime.now().toIso8601String(),
+        'mode_paiement': modePaiement,
+        'statut': net <= 0 ? 'Payé' : 'En attente',
+        'updated_at': nowMs(),
+      },
+      where: 'id = ?',
+      whereArgs: [p.id],
+    );
   }
 }

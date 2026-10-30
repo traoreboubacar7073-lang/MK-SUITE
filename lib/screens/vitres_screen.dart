@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+
 import '../data/repository.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/shared_widgets.dart';
 import '../services/pdf_service.dart';
+import 'glass_scan_screen.dart';
 
 /// Calcul Vitres — calculateur de surface (largeur × hauteur × quantité) ×
 /// prix/m² selon le type de vitre choisi, exactement comme l'onglet Excel
@@ -28,6 +30,7 @@ class VitresScreen extends StatefulWidget {
 /// Une ligne de saisie du calculateur — purement locale à l'écran tant
 /// qu'elle n'est pas enregistrée.
 class _LigneCalc {
+  final TextEditingController repereCtrl = TextEditingController();
   String? typeVitre;
   final TextEditingController largeurCtrl = TextEditingController();
   final TextEditingController hauteurCtrl = TextEditingController();
@@ -35,6 +38,7 @@ class _LigneCalc {
   final TextEditingController nouveauPrixCtrl = TextEditingController();
 
   void dispose() {
+    repereCtrl.dispose();
     largeurCtrl.dispose();
     hauteurCtrl.dispose();
     quantiteCtrl.dispose();
@@ -53,7 +57,9 @@ class _VitresScreenState extends State<VitresScreen> {
   List<CommandeVitre> _historique = [];
   final List<_LigneCalc> _lignes = [];
 
-  Map<String, double> get _tarifsMap => {for (final t in _tarifs) t.typeVitre: t.prixM2};
+  Map<String, double> get _tarifsMap => {
+    for (final t in _tarifs) t.typeVitre: t.prixM2,
+  };
 
   @override
   void initState() {
@@ -87,11 +93,16 @@ class _VitresScreenState extends State<VitresScreen> {
 
   void _addLigne() {
     final l = _LigneCalc();
-    l.typeVitre = _lignes.isNotEmpty ? _lignes.last.typeVitre : (_tarifs.isNotEmpty ? _tarifs.first.typeVitre : null);
+    l.typeVitre = _lignes.isNotEmpty
+        ? _lignes.last.typeVitre
+        : (_tarifs.isNotEmpty ? _tarifs.first.typeVitre : null);
     _lignes.add(l);
   }
 
-  bool _estNouveauType(_LigneCalc l) => l.typeVitre != null && l.typeVitre!.isNotEmpty && !_tarifsMap.containsKey(l.typeVitre);
+  bool _estNouveauType(_LigneCalc l) =>
+      l.typeVitre != null &&
+      l.typeVitre!.isNotEmpty &&
+      !_tarifsMap.containsKey(l.typeVitre);
 
   double _prixDeLaLigne(_LigneCalc l) {
     if (l.typeVitre == null || l.typeVitre!.isEmpty) return 0;
@@ -100,8 +111,10 @@ class _VitresScreenState extends State<VitresScreen> {
     return double.tryParse(l.nouveauPrixCtrl.text.replaceAll(',', '.')) ?? 0;
   }
 
-  double _largeur(_LigneCalc l) => double.tryParse(l.largeurCtrl.text.replaceAll(',', '.')) ?? 0;
-  double _hauteur(_LigneCalc l) => double.tryParse(l.hauteurCtrl.text.replaceAll(',', '.')) ?? 0;
+  double _largeur(_LigneCalc l) =>
+      (double.tryParse(l.largeurCtrl.text.replaceAll(',', '.')) ?? 0) / 100;
+  double _hauteur(_LigneCalc l) =>
+      (double.tryParse(l.hauteurCtrl.text.replaceAll(',', '.')) ?? 0) / 100;
   int _quantite(_LigneCalc l) => int.tryParse(l.quantiteCtrl.text.trim()) ?? 0;
   double _surface(_LigneCalc l) => _largeur(l) * _hauteur(l) * _quantite(l);
   double _montant(_LigneCalc l) => _surface(l) * _prixDeLaLigne(l);
@@ -109,12 +122,16 @@ class _VitresScreenState extends State<VitresScreen> {
   double get _surfaceTotale => _lignes.fold(0.0, (s, l) => s + _surface(l));
   double get _montantTotal => _lignes.fold(0.0, (s, l) => s + _montant(l));
 
-  List<_LigneCalc> get _lignesValides => _lignes.where((l) => _surface(l) > 0).toList();
+  List<_LigneCalc> get _lignesValides =>
+      _lignes.where((l) => _surface(l) > 0).toList();
 
   Future<void> _enregistrer() async {
     final valides = _lignesValides;
     if (valides.isEmpty) {
-      showFormError(context, "Saisis au moins une ligne (largeur, hauteur et quantité) avant d'enregistrer.");
+      showFormError(
+        context,
+        "Saisis au moins une ligne (largeur, hauteur et quantité) avant d'enregistrer.",
+      );
       return;
     }
     setState(() => _saving = true);
@@ -132,6 +149,7 @@ class _VitresScreenState extends State<VitresScreen> {
       for (final l in valides) {
         await _commandeRepo.create(
           typeVitre: l.typeVitre!,
+          repere: l.repereCtrl.text.trim(),
           largeur: _largeur(l),
           hauteur: _hauteur(l),
           quantite: _quantite(l),
@@ -153,11 +171,17 @@ class _VitresScreenState extends State<VitresScreen> {
         _historique = historique;
         _saving = false;
       });
-      showFormSuccess(context, '${valides.length} ligne(s) enregistrée(s) dans l\'historique.');
+      showFormSuccess(
+        context,
+        '${valides.length} ligne(s) enregistrée(s) dans l\'historique.',
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() => _saving = false);
-      showFormError(context, "Une erreur est survenue pendant l'enregistrement.");
+      showFormError(
+        context,
+        "Une erreur est survenue pendant l'enregistrement.",
+      );
     }
   }
 
@@ -165,9 +189,19 @@ class _VitresScreenState extends State<VitresScreen> {
     final now = DateTime.now();
     return _lignesValides.map((l) {
       return CommandeVitre(
-        id: 0, syncId: '', dateCommande: now.toIso8601String(), typeVitre: l.typeVitre ?? '—',
-        largeur: _largeur(l), hauteur: _hauteur(l), quantite: _quantite(l), surface: _surface(l),
-        prixUnitaire: _prixDeLaLigne(l), montant: _montant(l), devisNumero: null, factureNumero: null,
+        repere: l.repereCtrl.text.trim(),
+        id: 0,
+        syncId: '',
+        dateCommande: now.toIso8601String(),
+        typeVitre: l.typeVitre ?? '—',
+        largeur: _largeur(l),
+        hauteur: _hauteur(l),
+        quantite: _quantite(l),
+        surface: _surface(l),
+        prixUnitaire: _prixDeLaLigne(l),
+        montant: _montant(l),
+        devisNumero: null,
+        factureNumero: null,
         updatedAt: now.millisecondsSinceEpoch,
       );
     }).toList();
@@ -175,12 +209,19 @@ class _VitresScreenState extends State<VitresScreen> {
 
   Future<void> _genererPdf({required bool partager}) async {
     if (_lignesValides.isEmpty) {
-      showFormError(context, 'Saisis au moins une ligne avant de générer le PDF.');
+      showFormError(
+        context,
+        'Saisis au moins une ligne avant de générer le PDF.',
+      );
       return;
     }
     setState(() => _generatingPdf = true);
     try {
-      final bytes = await PdfService.vitresPdf(_lignesPourPdf(), _surfaceTotale, _montantTotal);
+      final bytes = await PdfService.vitresPdf(
+        _lignesPourPdf(),
+        _surfaceTotale,
+        _montantTotal,
+      );
       if (!mounted) return;
       if (partager) {
         await PdfService.share(bytes, 'Calcul_Vitres.pdf');
@@ -188,19 +229,55 @@ class _VitresScreenState extends State<VitresScreen> {
         await PdfService.preview(bytes, 'Calcul Vitres');
       }
     } catch (_) {
-      if (mounted) showFormError(context, 'Une erreur est survenue pendant la génération du PDF.');
+      if (mounted)
+        showFormError(
+          context,
+          'Une erreur est survenue pendant la génération du PDF.',
+        );
     } finally {
       if (mounted) setState(() => _generatingPdf = false);
     }
   }
 
   Future<void> _supprimerCommande(CommandeVitre c) async {
-    final ok = await confirmDelete(context, nom: 'Vitre ${c.typeVitre} (${fmtFcfa(c.montant)})', typeElement: 'cette entrée');
+    final ok = await confirmDelete(
+      context,
+      nom: 'Vitre ${c.typeVitre} (${fmtFcfa(c.montant)})',
+      typeElement: 'cette entrée',
+    );
     if (!ok) return;
     await _commandeRepo.delete(c);
     final historique = await _commandeRepo.all();
     if (!mounted) return;
     setState(() => _historique = historique);
+  }
+
+  Future<void> _scanner() async {
+    final result = await Navigator.push<GlassScanImport>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GlassScanScreen(
+          glassTypes: _tarifs.map((t) => t.typeVitre).toList(),
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      // Keep all existing user entries, including incomplete ones.
+      for (final m in result.measurements) {
+        final ligne = _LigneCalc();
+        ligne.typeVitre = result.glassType;
+        ligne.repereCtrl.text = m.reference;
+        ligne.largeurCtrl.text = m.widthCm.toString();
+        ligne.hauteurCtrl.text = m.heightCm.toString();
+        ligne.quantiteCtrl.text = m.quantity.toString();
+        _lignes.add(ligne);
+      }
+    });
+    showFormSuccess(
+      context,
+      '${result.measurements.length} ligne(s) ajoutée(s) au calcul.',
+    );
   }
 
   Future<void> _openTarifsManager() async {
@@ -229,7 +306,9 @@ class _VitresScreenState extends State<VitresScreen> {
       ),
       body: SafeArea(
         child: _loading
-            ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+            ? const Center(
+                child: CircularProgressIndicator(color: AppColors.gold),
+              )
             : RefreshIndicator(
                 color: AppColors.gold,
                 onRefresh: _loadAll,
@@ -238,7 +317,16 @@ class _VitresScreenState extends State<VitresScreen> {
                   children: [
                     Text(
                       'Saisis tes vitres à la suite : surface = largeur × hauteur × quantité, prix repris automatiquement selon le type.',
-                      style: TextStyle(color: context.textMuted, fontSize: 12.5),
+                      style: TextStyle(
+                        color: context.textMuted,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _saving ? null : _scanner,
+                      icon: const Icon(Icons.document_scanner_outlined),
+                      label: const Text('Scanner les dimensions (cm)'),
                     ),
                     const SizedBox(height: 16),
                     for (int i = 0; i < _lignes.length; i++) ...[
@@ -256,39 +344,62 @@ class _VitresScreenState extends State<VitresScreen> {
                       ),
                       const SizedBox(height: 10),
                     ],
-                    GhostButton(label: '+ Ajouter une ligne', onPressed: () => setState(_addLigne)),
+                    GhostButton(
+                      label: '+ Ajouter une ligne',
+                      onPressed: () => setState(_addLigne),
+                    ),
                     const SizedBox(height: 16),
-                    _TotalsCard(surfaceTotale: _surfaceTotale, montantTotal: _montantTotal),
+                    _TotalsCard(
+                      surfaceTotale: _surfaceTotale,
+                      montantTotal: _montantTotal,
+                    ),
                     const SizedBox(height: 16),
                     GoldButton(
-                      label: _saving ? 'Enregistrement…' : "Enregistrer toutes les lignes",
+                      label: _saving
+                          ? 'Enregistrement…'
+                          : "Enregistrer toutes les lignes",
                       icon: Icons.save_outlined,
                       onPressed: _saving ? () {} : _enregistrer,
                     ),
                     const SizedBox(height: 10),
-                    Row(children: [
-                      Expanded(
-                        child: GhostButton(
-                          label: _generatingPdf ? '…' : 'Aperçu / Imprimer',
-                          onPressed: _generatingPdf ? () {} : () => _genererPdf(partager: false),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GhostButton(
+                            label: _generatingPdf ? '…' : 'Aperçu / Imprimer',
+                            onPressed: _generatingPdf
+                                ? () {}
+                                : () => _genererPdf(partager: false),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: GhostButton(
-                          label: 'Partager',
-                          onPressed: _generatingPdf ? () {} : () => _genererPdf(partager: true),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: GhostButton(
+                            label: 'Partager',
+                            onPressed: _generatingPdf
+                                ? () {}
+                                : () => _genererPdf(partager: true),
+                          ),
                         ),
-                      ),
-                    ]),
+                      ],
+                    ),
                     const SizedBox(height: 28),
-                    Text('Historique des commandes', style: Theme.of(context).textTheme.titleLarge),
+                    Text(
+                      'Historique des commandes',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                     const SizedBox(height: 10),
                     if (_historique.isEmpty)
-                      const EmptyState(icon: Icons.window_outlined, text: 'Aucune commande enregistrée pour le moment.')
+                      const EmptyState(
+                        icon: Icons.window_outlined,
+                        text: 'Aucune commande enregistrée pour le moment.',
+                      )
                     else
                       for (final c in _historique) ...[
-                        _HistoriqueTile(commande: c, onDelete: () => _supprimerCommande(c)),
+                        _HistoriqueTile(
+                          commande: c,
+                          onDelete: () => _supprimerCommande(c),
+                        ),
                         const SizedBox(height: 8),
                       ],
                   ],
@@ -310,8 +421,13 @@ class _LigneCard extends StatelessWidget {
   final VoidCallback onDelete;
 
   const _LigneCard({
-    super.key, required this.ligne, required this.options, required this.nouveauType, required this.montant,
-    required this.onChanged, required this.onDelete,
+    super.key,
+    required this.ligne,
+    required this.options,
+    required this.nouveauType,
+    required this.montant,
+    required this.onChanged,
+    required this.onDelete,
   });
 
   @override
@@ -336,29 +452,71 @@ class _LigneCard extends StatelessWidget {
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.close, color: AppColors.textFaint, size: 20),
+                icon: const Icon(
+                  Icons.close,
+                  color: AppColors.textFaint,
+                  size: 20,
+                ),
                 onPressed: onDelete,
               ),
             ],
           ),
           const SizedBox(height: 10),
+          TextField(
+            controller: ligne.repereCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Repère de la vitre (ex. N1)',
+            ),
+            onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
-              Expanded(child: _NumField(label: 'Largeur (m)', ctrl: ligne.largeurCtrl, onChanged: onChanged)),
+              Expanded(
+                child: _NumField(
+                  label: 'Largeur (cm)',
+                  ctrl: ligne.largeurCtrl,
+                  onChanged: onChanged,
+                ),
+              ),
               const SizedBox(width: 8),
-              Expanded(child: _NumField(label: 'Hauteur (m)', ctrl: ligne.hauteurCtrl, onChanged: onChanged)),
+              Expanded(
+                child: _NumField(
+                  label: 'Hauteur (cm)',
+                  ctrl: ligne.hauteurCtrl,
+                  onChanged: onChanged,
+                ),
+              ),
               const SizedBox(width: 8),
-              Expanded(child: _NumField(label: 'Qté', ctrl: ligne.quantiteCtrl, onChanged: onChanged, integer: true)),
+              Expanded(
+                child: _NumField(
+                  label: 'Qté',
+                  ctrl: ligne.quantiteCtrl,
+                  onChanged: onChanged,
+                  integer: true,
+                ),
+              ),
             ],
           ),
           if (nouveauType) ...[
             const SizedBox(height: 10),
-            _NumField(label: 'Prix / m² (nouveau tarif, FCFA)', ctrl: ligne.nouveauPrixCtrl, onChanged: onChanged),
+            _NumField(
+              label: 'Prix / m² (nouveau tarif, FCFA)',
+              ctrl: ligne.nouveauPrixCtrl,
+              onChanged: onChanged,
+            ),
           ],
           const SizedBox(height: 10),
           Align(
             alignment: Alignment.centerRight,
-            child: Text(fmtFcfa(montant), style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 15)),
+            child: Text(
+              fmtFcfa(montant),
+              style: const TextStyle(
+                color: AppColors.gold,
+                fontWeight: FontWeight.w700,
+                fontSize: 15,
+              ),
+            ),
           ),
         ],
       ),
@@ -371,7 +529,12 @@ class _NumField extends StatelessWidget {
   final TextEditingController ctrl;
   final VoidCallback onChanged;
   final bool integer;
-  const _NumField({required this.label, required this.ctrl, required this.onChanged, this.integer = false});
+  const _NumField({
+    required this.label,
+    required this.ctrl,
+    required this.onChanged,
+    this.integer = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -383,7 +546,10 @@ class _NumField extends StatelessWidget {
         TextField(
           controller: ctrl,
           keyboardType: TextInputType.numberWithOptions(decimal: !integer),
-          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          ),
           onChanged: (_) => onChanged(),
         ),
       ],
@@ -400,24 +566,57 @@ class _TotalsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(color: AppColors.surfaceHover, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceHover,
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('SURFACE TOTALE', style: TextStyle(color: context.textMuted, fontSize: 10.5, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+              Text(
+                'SURFACE TOTALE',
+                style: TextStyle(
+                  color: context.textMuted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
+              ),
               const SizedBox(height: 4),
-              Text('${surfaceTotale.toStringAsFixed(3)} m²', style: TextStyle(color: context.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
+              Text(
+                '${surfaceTotale.toStringAsFixed(3)} m²',
+                style: TextStyle(
+                  color: context.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text('MONTANT TOTAL', style: TextStyle(color: context.textMuted, fontSize: 10.5, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+              Text(
+                'MONTANT TOTAL',
+                style: TextStyle(
+                  color: context.textMuted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
+              ),
               const SizedBox(height: 4),
-              Text(fmtFcfa(montantTotal), style: const TextStyle(color: AppColors.gold, fontSize: 17, fontWeight: FontWeight.w800)),
+              Text(
+                fmtFcfa(montantTotal),
+                style: const TextStyle(
+                  color: AppColors.gold,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
             ],
           ),
         ],
@@ -442,10 +641,17 @@ class _HistoriqueTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(c.typeVitre, style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 13.5)),
+                Text(
+                  '${c.repere.isEmpty ? "" : "${c.repere} · "}${c.typeVitre}',
+                  style: const TextStyle(
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13.5,
+                  ),
+                ),
                 const SizedBox(height: 3),
                 Text(
-                  '${c.largeur.toStringAsFixed(2)} × ${c.hauteur.toStringAsFixed(2)} m  ×${c.quantite}  ·  ${c.surface.toStringAsFixed(3)} m²',
+                  '${(c.largeur * 100).toStringAsFixed(1)} × ${(c.hauteur * 100).toStringAsFixed(1)} cm  ×${c.quantite}  ·  ${c.surface.toStringAsFixed(3)} m²',
                   style: TextStyle(color: context.textMuted, fontSize: 11.5),
                 ),
               ],
@@ -454,11 +660,22 @@ class _HistoriqueTile extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(fmtFcfa(c.montant), style: TextStyle(color: context.textPrimary, fontWeight: FontWeight.w700, fontSize: 13.5)),
+              Text(
+                fmtFcfa(c.montant),
+                style: TextStyle(
+                  color: context.textPrimary,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
+              ),
               const SizedBox(height: 4),
               InkWell(
                 onTap: onDelete,
-                child: const Icon(Icons.close, color: AppColors.textFaint, size: 18),
+                child: const Icon(
+                  Icons.close,
+                  color: AppColors.textFaint,
+                  size: 18,
+                ),
               ),
             ],
           ),
@@ -517,11 +734,32 @@ class _TarifsManagerSheetState extends State<_TarifsManagerSheet> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Supprimer ce tarif ?', style: TextStyle(color: AppColors.textPrimary, fontSize: 16)),
-        content: const Text('Cette action est définitive.', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+        title: const Text(
+          'Supprimer ce tarif ?',
+          style: TextStyle(color: AppColors.textPrimary, fontSize: 16),
+        ),
+        content: const Text(
+          'Cette action est définitive.',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler', style: TextStyle(color: AppColors.textMuted))),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Supprimer', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w600))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Annuler',
+              style: TextStyle(color: AppColors.textMuted),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Supprimer',
+              style: TextStyle(
+                color: AppColors.danger,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -543,7 +781,10 @@ class _TarifsManagerSheetState extends State<_TarifsManagerSheet> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Padding(padding: EdgeInsets.symmetric(vertical: 40), child: Center(child: CircularProgressIndicator(color: AppColors.gold)));
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: CircularProgressIndicator(color: AppColors.gold)),
+      );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -551,7 +792,10 @@ class _TarifsManagerSheetState extends State<_TarifsManagerSheet> {
         if (_tarifs.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
-            child: EmptyState(icon: Icons.list_alt, text: 'Aucun tarif enregistré pour le moment.'),
+            child: EmptyState(
+              icon: Icons.list_alt,
+              text: 'Aucun tarif enregistré pour le moment.',
+            ),
           )
         else
           ConstrainedBox(
@@ -576,12 +820,21 @@ class _TarifsManagerSheetState extends State<_TarifsManagerSheet> {
           children: [
             Expanded(
               flex: 3,
-              child: TextField(controller: _newTypeCtrl, decoration: const InputDecoration(hintText: 'Nouveau type (ex : FUMÉ 6mm)')),
+              child: TextField(
+                controller: _newTypeCtrl,
+                decoration: const InputDecoration(
+                  hintText: 'Nouveau type (ex : FUMÉ 6mm)',
+                ),
+              ),
             ),
             const SizedBox(width: 8),
             Expanded(
               flex: 2,
-              child: TextField(controller: _newPrixCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: 'Prix/m²')),
+              child: TextField(
+                controller: _newPrixCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(hintText: 'Prix/m²'),
+              ),
             ),
           ],
         ),
@@ -598,7 +851,12 @@ class _TarifRow extends StatefulWidget {
   final TarifVitre tarif;
   final ValueChanged<double> onPrixChanged;
   final VoidCallback onDelete;
-  const _TarifRow({super.key, required this.tarif, required this.onPrixChanged, required this.onDelete});
+  const _TarifRow({
+    super.key,
+    required this.tarif,
+    required this.onPrixChanged,
+    required this.onDelete,
+  });
 
   @override
   State<_TarifRow> createState() => _TarifRowState();
@@ -607,7 +865,8 @@ class _TarifRow extends StatefulWidget {
 class _TarifRowState extends State<_TarifRow> {
   late final TextEditingController _ctrl;
 
-  static String _fmt(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
+  static String _fmt(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 
   @override
   void initState() {
@@ -630,21 +889,38 @@ class _TarifRowState extends State<_TarifRow> {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: AppColors.surfaceHover, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceHover,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Row(
         children: [
-          Expanded(child: Text(widget.tarif.typeVitre, style: TextStyle(color: context.textPrimary, fontSize: 13))),
+          Expanded(
+            child: Text(
+              widget.tarif.typeVitre,
+              style: TextStyle(color: context.textPrimary, fontSize: 13),
+            ),
+          ),
           SizedBox(
             width: 90,
             child: TextField(
               controller: _ctrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 8,
+                ),
+              ),
               onSubmitted: (_) => _submit(),
               onEditingComplete: _submit,
             ),
           ),
-          IconButton(icon: const Icon(Icons.close, color: AppColors.textFaint, size: 18), onPressed: widget.onDelete),
+          IconButton(
+            icon: const Icon(Icons.close, color: AppColors.textFaint, size: 18),
+            onPressed: widget.onDelete,
+          ),
         ],
       ),
     );
