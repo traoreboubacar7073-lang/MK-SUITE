@@ -383,6 +383,7 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
           final localUpdatedAt = (localRows.first['updated_at'] ?? 0) as int;
           if (remoteUpdatedAt > localUpdatedAt) {
             final updateRow = Map<String, dynamic>.from(row)..remove('sync_id');
+            if (uniqueField != null) updateRow.remove(uniqueField);
             await db.update(
               table,
               updateRow,

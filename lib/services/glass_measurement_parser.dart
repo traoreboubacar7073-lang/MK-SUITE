@@ -24,7 +24,7 @@ class GlassParseResult {
 class GlassMeasurementParser {
   // Strict full-line matching: N12 is never interpreted as a quantity.
   static final _pattern = RegExp(
-    r'^\s*(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+)\s+[nN]\s*[°ºoO]?\s*(\d+)\s*$',
+    r'^\s*(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+)\s*[nN]\s*[°ºoO]?\s*(\d+)\s*$',
     caseSensitive: false,
   );
 
@@ -34,7 +34,16 @@ class GlassMeasurementParser {
     final lines = text.split('\n');
     for (var i = 0; i < lines.length; i++) {
       if (lines[i].trim().isEmpty) continue;
-      final match = _pattern.firstMatch(lines[i]);
+      // Normalize separators, never guess digits or missing quantities.
+      var line = lines[i].replaceAll(RegExp(r'[✕✖Хх]'), 'x')
+          .replaceAll(RegExp(r'(?<=\d)\s*[,،]\s*(?=\d)'), ',')
+          .replaceAll(RegExp(r'\s*(?:cm|CM)\b'), '')
+          .replaceAll(RegExp(r'\s*[-–—:;]\s*(?=[nN])'), ' ')
+          .trim();
+      // A reference may be written before the dimensions.
+      final leading = RegExp(r'^[nN]\s*[°ºoO]?\s*(\d+)\s*[:;\-–—]?\s+(.+)$').firstMatch(line);
+      if (leading != null) line = '${leading[2]} N${leading[1]}';
+      final match = _pattern.firstMatch(line);
       if (match == null) {
         invalid.add(i + 1);
         continue;

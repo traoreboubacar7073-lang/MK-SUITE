@@ -1,10 +1,27 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 import '../services/glass_measurement_parser.dart';
+
+// Process large photos outside the UI isolate; keep the original for review.
+Uint8List prepareGlassPhoto(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return bytes;
+  var image = img.bakeOrientation(decoded);
+  if (image.width > 2600 || image.height > 2600) {
+    image = img.copyResize(image, width: image.width >= image.height ? 2600 : null,
+        height: image.height > image.width ? 2600 : null);
+  }
+  image = img.grayscale(image);
+  image = img.adjustColor(image, contrast: 1.35);
+  return Uint8List.fromList(img.encodeJpg(image, quality: 98));
+}
 
 class GlassScanImport {
   final String glassType;
@@ -27,6 +44,8 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
   String? _error;
   bool _busy = true;
   bool _checked = false;
+  List<String> _readings = [];
+  int _reading = 0;
   GlassParseResult get _result => GlassMeasurementParser.parse(_text.text);
 
   @override
@@ -91,12 +110,23 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
       _text.clear();
       _error = null;
       _checked = false;
+      _readings = [];
     });
+    Directory? temporary;
     final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     try {
-      final recognized = await recognizer.processImage(
-        InputImage.fromFilePath(photo.path),
-      );
+      final original = await recognizer.processImage(InputImage.fromFilePath(photo.path));
+      RecognizedText? enhanced;
+      try {
+      temporary = await Directory.systemTemp.createTemp('mk-glass-');
+      final enhancedPath = '${temporary.path}/enhanced.jpg';
+      final bytes = await compute(prepareGlassPhoto, await photo.readAsBytes());
+      await File(enhancedPath).writeAsBytes(bytes);
+        enhanced = await recognizer.processImage(InputImage.fromFilePath(enhancedPath));
+      } catch (_) {
+        // Retain the successful original reading if enhancement is unavailable.
+      }
+      String assemble(RecognizedText recognized) {
       // ML Kit may return the reference column in a separate block. Reassemble
       // fragments by vertical position, then left-to-right. Review is required.
       final lines = recognized.blocks.expand((b) => b.lines).toList()
@@ -122,10 +152,18 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
             return row.map((l) => l.text).join(' ');
           })
           .join('\n');
+        return text;
+      }
+      final readings = [assemble(original)];
+      if (enhanced != null && assemble(enhanced) != readings.first) {
+        readings.add(assemble(enhanced));
+      }
       if (!mounted) return;
       setState(() {
-        _text.text = text;
-        _error = text.trim().isEmpty
+        _readings = readings;
+        _reading = 0;
+        _text.text = readings.first;
+        _error = readings.every((t) => t.trim().isEmpty)
             ? 'Aucun texte détecté. Reprenez une photo nette ou saisissez les mesures.'
             : null;
       });
@@ -136,6 +174,9 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
         );
     } finally {
       await recognizer.close();
+      if (temporary != null) {
+        try { await temporary.delete(recursive: true); } catch (_) {}
+      }
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -209,6 +250,19 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
               'Ajoutez d’abord un type et son tarif dans le calculateur.',
             ),
           const SizedBox(height: 16),
+          if (_readings.length > 1)
+            DropdownButtonFormField<int>(
+              value: _reading,
+              decoration: const InputDecoration(labelText: 'Comparer les lectures de la photo'),
+              items: [for (var i = 0; i < _readings.length; i++)
+                DropdownMenuItem(value: i, child: Text(
+                  '${i == 0 ? "Photo originale" : "Contraste renforcé"} : ${GlassMeasurementParser.parse(_readings[i]).measurements.length} ligne(s) reconnue(s)'))],
+              onChanged: _busy ? null : (i) { if (i != null) setState(() {
+                _reading = i; _text.text = _readings[i]; _checked = false;
+              }); },
+            ),
+          if (_path != null && result.measurements.isEmpty && !_busy)
+            const Text('Aucune dimension exploitable. Comparez les lectures puis corrigez le texte ci-dessous. Le lecteur hors ligne ne garantit pas la reconnaissance manuscrite.'),
           TextField(
             controller: _text,
             enabled: !_busy,

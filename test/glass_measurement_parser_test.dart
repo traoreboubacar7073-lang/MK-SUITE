@@ -2,6 +2,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mk_suite/services/glass_measurement_parser.dart';
 
 void main() {
+  test('Variantes OCR : signes, virgules espacées, repère collé ou en tête', () {
+    for (final text in ['42 ✕ 92, 5 х 2N1', 'N1 : 42 x 92,5 x 2', '42 cm x 92,5 cm x 2 — N1']) {
+      final r = GlassMeasurementParser.parse(text);
+      expect(r.invalidLines, isEmpty, reason: text);
+      expect(r.measurements.single.areaM2, closeTo(0.777, 0.000001));
+    }
+  });
   test('185,5 cm correspond à 1,855 m sans arrondi intermédiaire', () {
     final r = GlassMeasurementParser.parse('185,5 x 100 x 2 N12');
     expect(r.invalidLines, isEmpty);

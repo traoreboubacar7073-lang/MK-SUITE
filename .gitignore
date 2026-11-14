@@ -8,3 +8,9 @@ android/local.properties
 
 android/app/keystore/*.jks
 android/key.properties
+
+__pycache__/
+*.pyc
+desktop/dist/
+desktop/*.spec
+desktop/database/*.db
