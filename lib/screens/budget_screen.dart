@@ -374,7 +374,9 @@ class _BudgetCategorieCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ecart = budget - reel;
     final pct = budget > 0 ? (reel / budget * 100) : 0.0;
-    final info = _alerte(budget, pct);
+    final info = budget <= 0 && reel > 0
+        ? const _AlerteInfo('Sans budget', AppColors.warning)
+        : _alerte(budget, pct);
     final ecartColor = ecart >= 0 ? AppColors.success : AppColors.danger;
 
     return AppCard(
@@ -417,7 +419,7 @@ class _BudgetCategorieCard extends StatelessWidget {
               _MiniStat(label: 'Alloué', valeur: fmtFcfa(budget), color: context.textPrimary),
               _MiniStat(label: 'Réel', valeur: fmtFcfa(reel), color: context.textPrimary),
               _MiniStat(label: 'Écart', valeur: fmtFcfa(ecart), color: ecartColor),
-              _MiniStat(label: '% utilisé', valeur: '${pct.toStringAsFixed(0)} %', color: context.textMuted),
+              _MiniStat(label: '% utilisé', valeur: budget > 0 ? '${pct.toStringAsFixed(0)} %' : '—', color: context.textMuted),
             ],
           ),
         ],
