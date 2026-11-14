@@ -61,6 +61,8 @@ android {
             versionNameSuffix = "-test"
         }
         release {
+            // Only optional non-Latin ML Kit classes are excluded from missing-class diagnostics.
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.release
             }
