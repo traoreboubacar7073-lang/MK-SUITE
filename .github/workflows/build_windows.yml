@@ -25,7 +25,7 @@ jobs:
       - name: Vérifier le démarrage des modules
         run: python -c "import main; import modules.calcul_vitres; import modules.synchronisation"
       - name: Compiler le logiciel
-        run: python -m PyInstaller --noconfirm --clean --name MK_Suite --windowed --onefile --add-data "../assets/images/logo.png;assets" --collect-all customtkinter --hidden-import PIL._tkinter_finder main.py
+        run: python -m PyInstaller --noconfirm --clean --name MK_Suite --windowed --onefile --icon assets/icon.ico --add-data "assets/icon.ico;assets" --add-data "../assets/images/logo.png;assets" --collect-all customtkinter --hidden-import PIL._tkinter_finder main.py
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:

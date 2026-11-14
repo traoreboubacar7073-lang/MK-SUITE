@@ -91,6 +91,8 @@ echo.
 
 echo [4/4] Compilation en .exe (peut prendre 1 a 3 minutes)...
 !PY_CMD! -m PyInstaller --name "MK_Suite" --windowed --onefile ^
+    --icon="assets\icon.ico" ^
+    --add-data "assets\icon.ico;assets" ^
     --add-data "..\assets\images\logo.png;assets" ^
     --hidden-import "PIL._tkinter_finder" ^
     --distpath "dist" ^
