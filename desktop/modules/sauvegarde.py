@@ -1,3 +1,4 @@
+from contextlib import closing
 """
 MK Suite - Sauvegarde et restauration
 Exporte une copie complète de la base de données (mk_entreprise.db) vers un
@@ -101,7 +102,7 @@ class SauvegardeView(ctk.CTkScrollableFrame):
         try:
             with self.db.lock:
                 self.db.conn.commit()
-                with sqlite3.connect(dest) as target:
+                with closing(sqlite3.connect(dest)) as target:
                     self.db.conn.backup(target)
             messagebox.showinfo("Sauvegarde enregistrée", f"Sauvegarde enregistrée avec succès :\n{dest}")
         except Exception as e:
@@ -130,13 +131,13 @@ class SauvegardeView(ctk.CTkScrollableFrame):
         # moitié écrite/corrompue.
         tmp_path = self.db.db_path + ".tmp_restore"
         try:
-            with sqlite3.connect(src) as source:
+            with closing(sqlite3.connect(src)) as source:
                 if source.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise ValueError("Sauvegarde SQLite endommagée")
                 tables = {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if not {"clients", "devis", "factures"} <= tables:
                     raise ValueError("Ce fichier n'est pas une sauvegarde MK Suite")
-                with sqlite3.connect(tmp_path) as target:
+                with closing(sqlite3.connect(tmp_path)) as target:
                     source.backup(target)
             with self.db.lock:
                 self.db.conn.commit()

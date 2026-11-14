@@ -1,3 +1,4 @@
+from contextlib import closing
 """
 MK Suite - Gestionnaire de base de données
 Base de données locale SQLite - fonctionne 100% hors ligne
@@ -323,7 +324,7 @@ class DatabaseManager:
         if os.path.isfile(self.db_path):
             backup = self.db_path + '.before-1.1.2.bak'
             if not os.path.exists(backup):
-                with sqlite3.connect(self.db_path) as source, sqlite3.connect(backup) as target:
+                with closing(sqlite3.connect(self.db_path)) as source, closing(sqlite3.connect(backup)) as target:
                     source.backup(target)
         self._load_seed_if_first_run()
         # check_same_thread=False : la synchronisation Wi-Fi (modules/sync_service.py)

@@ -1,3 +1,4 @@
+from contextlib import closing
 import copy
 import os
 import tempfile
@@ -63,10 +64,11 @@ class SyncTests(unittest.TestCase):
         path = os.path.join(self.tmp.name, 'b.db')
         self.b.close()
         import sqlite3
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn:
             conn.execute("DROP TRIGGER IF EXISTS trg_commandes_vitres_sync_ai")
             conn.execute("DROP TRIGGER IF EXISTS trg_commandes_vitres_sync_au")
             conn.execute("ALTER TABLE commandes_vitres DROP COLUMN repere")
+            conn.commit()
         self.b = DatabaseManager(path)
         self.assertTrue(os.path.exists(path + '.before-1.1.2.bak'))
         columns = {r[1] for r in self.b.conn.execute('PRAGMA table_info(commandes_vitres)')}
