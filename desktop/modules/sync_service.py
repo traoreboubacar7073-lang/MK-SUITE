@@ -224,6 +224,8 @@ def import_all(db, dump):
                 if remote_updated_at > local_updated_at:
                     row = strip_refs(dict(r))
                     row.pop("id", None)
+                    if unique_field:
+                        row.pop(unique_field, None)
                     update_row(table, row, sync_id)
                     log.updated += 1
 

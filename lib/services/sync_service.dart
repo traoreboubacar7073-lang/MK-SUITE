@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -42,6 +43,31 @@ import '../data/repository.dart' show nextNumero;
 /// disparaître de l'autre aussi, au prochain échange.
 
 const int syncPort = 8642;
+
+/// Keep data errors distinct from connection problems; do not display SQL
+/// statements containing customer data in the user-facing error message.
+String syncErrorMessage(Object error) {
+  if (error is DatabaseException) {
+    if (error.toString().contains('UNIQUE constraint failed')) {
+      return 'Synchronisation annulée : un numéro ou un code est déjà utilisé. '
+          'Mettez à jour MK Suite sur les deux appareils puis réessayez. '
+          'Ne supprimez aucun devis pour contourner cette erreur.';
+    }
+    return 'Synchronisation interrompue par une erreur de base de données. '
+        'Conservez une sauvegarde et vérifiez que les deux appareils sont à jour.';
+  }
+  if (error is SocketException || error is TimeoutException) {
+    return 'Connexion impossible ou délai dépassé : vérifiez le même réseau Wi-Fi, '
+        'l’adresse et le serveur démarré sur l’autre appareil.';
+  }
+  if (error is StateError) return error.message.toString();
+  if (error is FormatException) {
+    return 'Données de synchronisation incompatibles ou incomplètes. '
+        'Mettez à jour les deux appareils.';
+  }
+  return 'La synchronisation a échoué. Vérifiez les versions des deux appareils '
+      'et conservez vos sauvegardes avant de réessayer.';
+}
 
 class SyncLog {
   final List<String> lines = [];
@@ -302,6 +328,7 @@ Future<SyncLog> importAll(Database rawDb, Map<String, dynamic> dump) async {
             final row = Map<String, dynamic>.from(r);
             row.removeWhere((k, _) => k.endsWith('_sync_id_ref'));
             row.remove('sync_id');
+            if (uniqueField != null) row.remove(uniqueField);
             await db.update(
               table,
               row,

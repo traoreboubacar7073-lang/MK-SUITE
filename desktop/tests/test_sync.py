@@ -17,6 +17,14 @@ class SyncTests(unittest.TestCase):
         c.commit()
     def tearDown(self):
         self.a.conn.close(); self.b.conn.close(); self.tmp.cleanup()
+    def test_numbering_uses_maximum_not_last_inserted_id(self):
+        from datetime import datetime
+        year = datetime.now().year
+        for suffix in (108, 110, 109):
+            self.a.conn.execute("INSERT INTO devis(numero) VALUES(?)", (f"DV-{year}-{suffix}",))
+        self.a.conn.commit()
+        self.assertEqual(self.a.next_numero("DV", "devis"), f"DV-{year}-111")
+
     def test_repeated_exchange_and_new_line_ids(self):
         dump = export_all(self.a)
         import_all(self.b, dump)

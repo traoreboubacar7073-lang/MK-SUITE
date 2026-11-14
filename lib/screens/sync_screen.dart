@@ -143,8 +143,7 @@ class _SyncScreenState extends State<SyncScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(
-        () => _lastError =
-            "Échec de la synchronisation : vérifie que les deux appareils sont sur le même Wi-Fi et que l'autre appareil a démarré son serveur.\n\n($e)",
+        () => _lastError = syncErrorMessage(e),
       );
     } finally {
       if (mounted) setState(() => _syncing = false);

@@ -607,14 +607,9 @@ class DatabaseManager:
                 like_pattern = f"{prefix}-{year}-%"
             else:
                 like_pattern = f"{prefix}-%"
-            cur.execute(f"SELECT {column} FROM {table} WHERE {column} LIKE ? ORDER BY id DESC LIMIT 1",
-                         (like_pattern,))
-            row = cur.fetchone()
-            if row:
-                last_num = int(row[0].split("-")[-1])
-                new_num = last_num + 1
-            else:
-                new_num = 1
+            cur.execute(f"SELECT {column} FROM {table} WHERE {column} LIKE ?", (like_pattern,))
+            suffixes = [str(row[0]).split("-")[-1] for row in cur.fetchall()]
+            new_num = max((int(n) for n in suffixes if n.isdigit()), default=0) + 1
             if with_year:
                 return f"{prefix}-{year}-{new_num:0{width}d}"
             return f"{prefix}-{new_num:0{width}d}"

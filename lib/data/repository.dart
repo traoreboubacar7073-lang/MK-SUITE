@@ -26,14 +26,15 @@ Future<String> nextNumero(
     columns: [column],
     where: '$column LIKE ?',
     whereArgs: [like],
-    orderBy: 'id DESC',
-    limit: 1,
   );
-  int newNum = 1;
-  if (rows.isNotEmpty) {
-    final last = (rows.first[column] as String).split('-').last;
-    newNum = (int.tryParse(last) ?? 0) + 1;
+  // Imports may insert older numbers after newer ones. Use the largest
+  // numeric suffix, not the ID of the last inserted record.
+  int maxNum = 0;
+  for (final row in rows) {
+    final suffix = int.tryParse((row[column] as String).split('-').last);
+    if (suffix != null && suffix > maxNum) maxNum = suffix;
   }
+  final newNum = maxNum + 1;
   final numStr = newNum.toString().padLeft(width, '0');
   return withYear ? '$prefix-$year-$numStr' : '$prefix-$numStr';
 }
