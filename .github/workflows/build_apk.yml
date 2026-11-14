@@ -1,55 +1,95 @@
-name: Compiler l'application Android
+name: Vérifier et compiler la mise à jour Android
 
-# Se déclenche automatiquement à chaque envoi de code sur la branche
-# principale, et peut aussi être lancé manuellement depuis l'onglet
-# "Actions" du dépôt GitHub (bouton "Run workflow").
 on:
   pull_request:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build APK
+  checks:
+    name: Analyse et tests
     runs-on: ubuntu-latest
-
     steps:
-      - name: Récupérer le code du projet
-        uses: actions/checkout@v4
-
-      - name: Installer Java (requis pour compiler Android)
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-
-      - name: Installer Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter test
 
-      - name: Vérifier l'installation
-        run: flutter doctor -v
-
-      - name: Installer les dépendances du projet
-        run: flutter pub get
-
-      - name: Analyser le code
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
-
-      - name: Exécuter les tests
-        run: flutter test
-
-      - name: Compiler une version de test (.apk)
-        run: flutter build apk --debug
-
-      - name: Mettre le fichier .apk à disposition au téléchargement
+  release:
+    name: APK de mise à jour signé
+    needs: checks
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      MK_KEYSTORE_BASE64: ${{ secrets.MK_KEYSTORE_BASE64 }}
+      MK_KEYSTORE_PASSWORD: ${{ secrets.MK_KEYSTORE_PASSWORD }}
+      MK_KEY_PASSWORD: ${{ secrets.MK_KEY_PASSWORD }}
+      MK_KEY_ALIAS: ${{ secrets.MK_KEY_ALIAS }}
+      MK_KEYSTORE_PATH: ${{ github.workspace }}/android/app/keystore/mk-suite-release.jks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Charger la clé de signature existante
+        shell: python
+        run: |
+          import base64
+          import os
+          from pathlib import Path
+          required = ('MK_KEYSTORE_BASE64', 'MK_KEYSTORE_PASSWORD', 'MK_KEY_PASSWORD')
+          if any(not os.environ.get(name) for name in required):
+              raise SystemExit('Configurez les secrets MK de la clé d’origine. Aucun APK de remplacement ne sera publié sans cette clé.')
+          target = Path(os.environ['MK_KEYSTORE_PATH'])
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_bytes(base64.b64decode(os.environ['MK_KEYSTORE_BASE64'], validate=True))
+          target.chmod(0o600)
+      - run: flutter pub get
+      - name: Compiler la mise à jour
+        run: flutter build apk --release
+      - name: Vérifier la signature et l’identité de l’APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          "$build_tools/apksigner" verify --verbose build/app/outputs/flutter-apk/app-release.apk
+          "$build_tools/aapt" dump badging build/app/outputs/flutter-apk/app-release.apk > /tmp/mk-badging.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          badging = Path('/tmp/mk-badging.txt').read_text()
+          match = re.search(r"package: name='([^']+)' versionCode='(\d+)'", badging)
+          if not match or match[1] != 'com.mkentreprise.mk_suite':
+              raise SystemExit('Identifiant Android incorrect : publication annulée.')
+          if int(match[2]) < 3:
+              raise SystemExit('Numéro de version incorrect : publication annulée.')
+          PY
+      - name: Publier uniquement l’APK de mise à jour
         uses: actions/upload-artifact@v4
         with:
-          name: mk-suite-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: mk-suite-mise-a-jour-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
           retention-days: 30
+      - name: Retirer la clé du runner
+        if: always()
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          Path(os.environ['MK_KEYSTORE_PATH']).unlink(missing_ok=True)
