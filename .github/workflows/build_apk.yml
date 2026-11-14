@@ -3,7 +3,7 @@ name: Vérifier et compiler la mise à jour Android
 on:
   pull_request:
   push:
-    branches: [main, master]
+    branches: [main, master, feature/scanner-vitres-cm]
   workflow_dispatch:
 
 permissions:
