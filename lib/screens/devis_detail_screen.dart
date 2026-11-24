@@ -8,6 +8,7 @@ import '../services/pdf_service.dart';
 import '../services/whatsapp_service.dart';
 import 'facture_detail_screen.dart';
 import 'devis_form_sheet.dart';
+import 'document_preview_screen.dart';
 
 /// Fiche détail d'un devis — objet, validité, lignes, montant HT, et les
 /// actions : aperçu/partage PDF, changement de statut, conversion en
@@ -97,11 +98,20 @@ class _DevisDetailScreenState extends State<DevisDetailScreen> {
   }
 
   Future<void> _preview() async {
+    if (_busy || _loading) return;
     setState(() => _busy = true);
+    // Capture this document snapshot; updates elsewhere must not regenerate it.
+    final devis = _devis;
+    final client = _client;
+    final lignes = List<LigneDocument>.unmodifiable(_lignes);
     try {
-      final bytes = await PdfService.devisPdf(_devis, _client, _lignes);
-      if (!mounted) return;
-      await PdfService.preview(bytes, 'Devis ${_devis.numero}');
+      await Navigator.of(context).push<void>(MaterialPageRoute(
+        builder: (_) => DocumentPreviewScreen(
+          title: 'Devis ${devis.numero}',
+          filename: '${devis.numero}.pdf',
+          loadDocument: () => PdfService.devisPdf(devis, client, lignes),
+        ),
+      ));
     } catch (_) {
       if (mounted)
         showFormError(context, 'Impossible de générer le PDF de ce devis.');
