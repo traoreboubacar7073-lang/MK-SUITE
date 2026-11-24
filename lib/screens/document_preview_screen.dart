@@ -24,14 +24,29 @@ class DocumentPreviewScreen extends StatefulWidget {
   State<DocumentPreviewScreen> createState() => _DocumentPreviewScreenState();
 }
 
+class _DocumentResult {
+  final Uint8List? bytes;
+  const _DocumentResult(this.bytes);
+}
+
 class _DocumentPreviewScreenState extends State<DocumentPreviewScreen> {
-  late Future<Uint8List> _document;
+  late Future<_DocumentResult> _document;
+
+  Future<_DocumentResult> _loadDocument() async {
+    try {
+      return _DocumentResult(await widget.loadDocument());
+    } catch (_) {
+      // Handle immediately, including a failure before FutureBuilder rebuilds
+      // on retry. Do not leave an unhandled Future error between frames.
+      return const _DocumentResult(null);
+    }
+  }
   bool _acting = false;
 
   @override
   void initState() {
     super.initState();
-    _document = Future.sync(widget.loadDocument);
+    _document = _loadDocument();
   }
 
   Future<void> _action(Uint8List bytes, {required bool print}) async {
@@ -57,10 +72,10 @@ class _DocumentPreviewScreenState extends State<DocumentPreviewScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text(widget.title)),
-    body: FutureBuilder<Uint8List>(
+    body: FutureBuilder<_DocumentResult>(
       future: _document,
       builder: (context, snapshot) {
-        if (snapshot.hasError || (snapshot.hasData && snapshot.data!.isEmpty)) {
+        if (snapshot.hasError || (snapshot.hasData && (snapshot.data!.bytes?.isEmpty ?? true))) {
           return Center(child: Padding(
             padding: const EdgeInsets.all(24),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -68,7 +83,7 @@ class _DocumentPreviewScreenState extends State<DocumentPreviewScreen> {
               const SizedBox(height: 12),
               OutlinedButton(
                 onPressed: () => setState(() {
-                  _document = Future.sync(widget.loadDocument);
+                  _document = _loadDocument();
                 }),
                 child: const Text('Réessayer'),
               ),
@@ -76,7 +91,7 @@ class _DocumentPreviewScreenState extends State<DocumentPreviewScreen> {
           ));
         }
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final bytes = snapshot.data!;
+        final bytes = snapshot.data!.bytes!;
         return Column(children: [
           Expanded(child: PdfPreview(
             build: (_) async => bytes,
