@@ -59,6 +59,8 @@ void main() {
     expect(generated, 1);
     expect(find.text('Partager'), findsOneWidget);
     expect(find.textContaining('L’aperçu ne peut pas être affiché.'), findsOneWidget);
+    // The printing widget reports its handled renderer error to FlutterError.
+    expect(tester.takeException(), 'synthetic renderer error');
     expect(tester.takeException(), isNull);
   });
   testWidgets('Un PDF vide est signalé avant tout appel au moteur natif', (tester) async {

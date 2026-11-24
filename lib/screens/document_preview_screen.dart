@@ -67,7 +67,9 @@ class _DocumentPreviewScreenState extends State<DocumentPreviewScreen> {
               const Text('Le PDF n’a pas pu être généré. Le devis reste enregistré.'),
               const SizedBox(height: 12),
               OutlinedButton(
-                onPressed: () => setState(() => _document = Future.sync(widget.loadDocument)),
+                onPressed: () => setState(() {
+                  _document = Future.sync(widget.loadDocument);
+                }),
                 child: const Text('Réessayer'),
               ),
             ]),
