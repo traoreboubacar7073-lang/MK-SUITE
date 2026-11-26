@@ -120,6 +120,12 @@ class SynchronisationView(ctk.CTkScrollableFrame):
         self.server_btn = primary_button(row2, "", command=self.toggle_server, width=200)
         self.server_btn.pack(side="right")
 
+        from modules.glass_ai_settings import open_scanner_settings
+        secondary_button(inner, "Configurer le scanner IA manuscrit…",
+                         command=lambda: open_scanner_settings(self)).pack(anchor="w", pady=(12, 0))
+        ctk.CTkLabel(inner, text="Option distincte : le scanner IA utilise Internet ; la synchronisation reste locale.",
+                     font=font(10), wraplength=820).pack(anchor="w", pady=(4, 0))
+
         # ----- Section connexion à l'autre appareil -----
         peer_card = card(self)
         peer_card.pack(fill="x", padx=4, pady=(0, 16))

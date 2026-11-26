@@ -8,6 +8,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 import '../services/glass_measurement_parser.dart';
+import '../services/glass_ai_client.dart';
+import 'glass_crop_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Process large photos outside the UI isolate; keep the original for review.
 Uint8List prepareGlassPhoto(Uint8List bytes) {
@@ -39,6 +42,12 @@ class GlassScanScreen extends StatefulWidget {
 class _GlassScanScreenState extends State<GlassScanScreen> {
   final _text = TextEditingController();
   final _picker = ImagePicker();
+  final _aiAddress = TextEditingController();
+  final _aiToken = TextEditingController();
+  bool _useAi = true;
+  Uint8List? _aiPhoto;
+  List<String> _aiWarnings = [];
+  int? _aiRowCount;
   String? _type;
   String? _path;
   String? _error;
@@ -51,7 +60,68 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
   @override
   void initState() {
     super.initState();
+    _loadAiAddress();
     _recover();
+  }
+
+  Future<void> _loadAiAddress() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted || _aiAddress.text.isNotEmpty) return;
+      _aiAddress.text = prefs.getString('glass_ai_address') ?? '';
+    } catch (_) {
+      // Address can always be entered manually.
+    }
+  }
+
+  Future<void> _prepareAiPhoto(XFile photo) async {
+    if (!mounted) return;
+    final bytes = await photo.readAsBytes();
+    if (!mounted) return;
+    final cropped = await Navigator.of(context).push<Uint8List>(MaterialPageRoute(
+      builder: (_) => GlassCropScreen(bytes: bytes),
+    ));
+    if (cropped == null || !mounted) return;
+    setState(() {
+      _path = null;
+      _aiPhoto = cropped;
+      _aiWarnings = [];
+      _aiRowCount = null;
+      _readings = [];
+      _text.clear();
+      _checked = false;
+      _error = null;
+    });
+  }
+
+  Future<void> _readAi() async {
+    if (_busy || _aiPhoto == null) return;
+    setState(() { _busy = true; _error = null; _checked = false; });
+    try {
+      final result = await GlassAiClient.recognize(_aiPhoto!, _aiAddress.text, _aiToken.text);
+      if (!mounted) return;
+      setState(() {
+        _text.text = result.text;
+        _aiWarnings = result.warnings;
+        _aiRowCount = result.rowCount;
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('glass_ai_address', _aiAddress.text.trim());
+    } catch (error) {
+      if (mounted) setState(() => _error = error is FormatException
+          ? error.message.toString()
+          : 'Lecture IA impossible. Vérifiez l’adresse, le serveur de l’ordinateur et Internet.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _recognize(XFile photo) async {
+    if (_useAi) {
+      await _prepareAiPhoto(photo);
+    } else {
+      await _recognizeOffline(photo);
+    }
   }
 
   Future<void> _recover() async {
@@ -76,6 +146,8 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
   @override
   void dispose() {
     _text.dispose();
+    _aiAddress.dispose();
+    _aiToken.dispose();
     super.dispose();
   }
 
@@ -102,7 +174,7 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
     }
   }
 
-  Future<void> _recognize(XFile photo) async {
+  Future<void> _recognizeOffline(XFile photo) async {
     if (!mounted) return;
     setState(() {
       _busy = true;
@@ -111,6 +183,9 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
       _error = null;
       _checked = false;
       _readings = [];
+      _aiPhoto = null;
+      _aiWarnings = [];
+      _aiRowCount = null;
     });
     Directory? temporary;
     final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
@@ -189,13 +264,34 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
         _checked &&
         _type != null &&
         result.measurements.isNotEmpty &&
-        result.invalidLines.isEmpty;
+        result.invalidLines.isEmpty &&
+        (_aiRowCount == null || result.measurements.length == _aiRowCount);
     return Scaffold(
       appBar: AppBar(title: const Text('Scanner les dimensions')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           const Text('Mesures en cm · N1 = repère · ×2 = quantité'),
+          SwitchListTile(
+            title: const Text('Lecture IA du manuscrit'),
+            subtitle: const Text('Internet via votre service configuré. La lecture locale reste disponible.'),
+            value: _useAi,
+            onChanged: _busy ? null : (value) => setState(() {
+              _useAi = value; _text.clear(); _checked = false; _readings = [];
+              _aiPhoto = null; _path = null; _aiWarnings = []; _aiRowCount = null; _error = null;
+            }),
+          ),
+          if (_useAi) ...[
+            const Text('La zone choisie est envoyée au service IA uniquement avec le bouton de lecture. Vérifiez chaque mesure ; une lecture IA peut se tromper.'),
+            ExpansionTile(title: const Text('Connexion au scanner IA'), children: [
+              TextField(controller: _aiAddress, enabled: !_busy,
+                decoration: const InputDecoration(labelText: 'Adresse affichée sur l’ordinateur', hintText: '192.168.1.16:8642')),
+              TextField(controller: _aiToken, enabled: !_busy, obscureText: true,
+                enableSuggestions: false, autocorrect: false,
+                decoration: const InputDecoration(labelText: 'Code de connexion du scanner', helperText: 'Ce code n’est pas votre clé API. Il n’est pas enregistré sur le téléphone.')),
+              const Padding(padding: EdgeInsets.all(8), child: Text('Sur Windows : Synchronisation → Configurer le scanner IA, puis démarrer le serveur. Le PC doit rester allumé et connecté à Internet.')),
+            ]),
+          ],
           const SizedBox(height: 8),
           const Text(
             'Photographiez la feuille de face, bien éclairée. La lecture manuscrite peut se tromper ou oublier des lignes : comparez toujours avec la photo.',
@@ -225,6 +321,19 @@ class _GlassScanScreenState extends State<GlassScanScreen> {
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
+          if (_aiPhoto != null) ...[
+            SizedBox(height: 240, child: Image.memory(_aiPhoto!, fit: BoxFit.contain)),
+            FilledButton.icon(onPressed: _busy ? null : _readAi,
+              icon: const Icon(Icons.auto_awesome),
+              label: Text(_busy ? 'Lecture IA en cours…' : 'Lire les dimensions avec l’IA')),
+          ],
+          if (_aiRowCount != null)
+            Text('$_aiRowCount ligne(s) repérée(s) sur la photo : conservez ce nombre lors de la vérification.'),
+          for (final warning in _aiWarnings)
+            Padding(padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Text(warning, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          if (_aiRowCount != null && _result.measurements.length != _aiRowCount)
+            const Text('Corrigez toutes les lignes, y compris celles marquées « ? », avant de les importer.'),
           if (_path != null)
             SizedBox(
               height: 260,

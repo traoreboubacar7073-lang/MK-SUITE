@@ -516,6 +516,9 @@ class _SyncRequestHandler(BaseHTTPRequestHandler):
         try:
             if self.path == "/ping":
                 self._send_json(200, {"app": APP_ID})
+            elif self.path == "/glass/status":
+                from modules.glass_ai_service import status
+                self._send_json(200, status())
             elif self.path == "/export":
                 self._send_json(200, export_all(self.db))
             else:
@@ -525,7 +528,24 @@ class _SyncRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            if self.path == "/import":
+            if self.path == "/glass/recognize":
+                from modules.glass_ai_service import recognize, GlassAIError, MAX_REQUEST_BYTES
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    if length <= 0 or length > MAX_REQUEST_BYTES:
+                        self._send_json(413, {"code": "image_too_large", "error": "Photo trop volumineuse ou manquante."})
+                        return
+                    self.connection.settimeout(15)
+                    body = self.rfile.read(length)
+                    if len(body) != length:
+                        raise ValueError("Photo incomplète")
+                    result = recognize(json.loads(body.decode("utf-8")), self.headers.get("Authorization", ""))
+                    self._send_json(200, result)
+                except GlassAIError as exc:
+                    self._send_json(exc.status, {"code": exc.code, "error": str(exc)})
+                except (ValueError, OSError):
+                    self._send_json(400, {"code": "invalid_image", "error": "Photo invalide ou incomplète."})
+            elif self.path == "/import":
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 dump = json.loads(body.decode("utf-8"))

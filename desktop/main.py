@@ -51,7 +51,7 @@ NAV_ITEMS = [
 class MKSuiteApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("MK Suite 1.1.2 — Gestion MK Entreprise")
+        self.title("MK Suite 1.2.0 — Gestion MK Entreprise")
         self._center_window(1360, 820)
         self.minsize(1100, 700)
         self.configure(fg_color=COLORS["bg_dark"])
@@ -138,7 +138,7 @@ class MKSuiteApp(ctk.CTk):
         footer_row.pack(fill="x", pady=(2, 0))
         ctk.CTkLabel(footer_row, text="Bamako, Mali", font=font(10),
                      text_color=COLORS["text_muted"]).pack(side="left")
-        ctk.CTkLabel(footer_row, text="MK Suite v1.0", font=font(9),
+        ctk.CTkLabel(footer_row, text="MK Suite v1.2.0", font=font(9),
                      text_color=COLORS["gold"]).pack(side="right")
 
     def _add_nav_button(self, key, icon, label):
