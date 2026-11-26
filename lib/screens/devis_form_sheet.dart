@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../data/repository.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
@@ -32,8 +33,13 @@ class _LigneRow {
 /// total HT recalculé à chaque frappe. Il n'existe pas de widget partagé
 /// pour ça dans shared_widgets.dart — construit ici pour devis_form_sheet.
 class LigneItemsEditor extends StatefulWidget {
+  final List<LigneDocument> initialLines;
   final ValueChanged<double> onTotalChanged;
-  const LigneItemsEditor({super.key, required this.onTotalChanged});
+  const LigneItemsEditor({
+    super.key,
+    required this.onTotalChanged,
+    this.initialLines = const [],
+  });
 
   @override
   State<LigneItemsEditor> createState() => LigneItemsEditorState();
@@ -45,8 +51,17 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
   @override
   void initState() {
     super.initState();
-    for (var i = 0; i < 3; i++) {
-      _rows.add(_LigneRow());
+    for (final line in widget.initialLines) {
+      final row = _LigneRow();
+      row.qte.text = line.quantite.toString();
+      row.desc.text = line.description;
+      row.prix.text = line.prixUnitaire.toString();
+      _rows.add(row);
+    }
+    if (_rows.isEmpty) {
+      for (var i = 0; i < 3; i++) {
+        _rows.add(_LigneRow());
+      }
     }
   }
 
@@ -77,10 +92,11 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
 
   /// Retourne les lignes valides (description non vide), sous la forme
   /// attendue par `DevisRepository.create` — un record `List<({...})>`.
-  List<({double quantite, String description, double prixUnitaire})> validLines() {
+  List<({double quantite, String description, double prixUnitaire})>
+  validLines() {
     return _rows.where((r) => r.valide).map((r) {
-      final q = double.tryParse(r.qte.text.replaceAll(',', '.')) ?? 1;
-      final p = double.tryParse(r.prix.text.replaceAll(',', '.')) ?? 0;
+      final q = double.tryParse(r.qte.text.replaceAll(',', '.')) ?? double.nan;
+      final p = double.tryParse(r.prix.text.replaceAll(',', '.')) ?? double.nan;
       return (quantite: q, description: r.desc.text.trim(), prixUnitaire: p);
     }).toList();
   }
@@ -92,9 +108,38 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
       children: [
         Row(
           children: [
-            SizedBox(width: 44, child: Text('Qté', style: TextStyle(color: context.textFaint, fontSize: 10.5, fontWeight: FontWeight.w700))),
-            Expanded(child: Text('Description', style: TextStyle(color: context.textFaint, fontSize: 10.5, fontWeight: FontWeight.w700))),
-            SizedBox(width: 78, child: Text('Prix unit.', style: TextStyle(color: context.textFaint, fontSize: 10.5, fontWeight: FontWeight.w700))),
+            SizedBox(
+              width: 44,
+              child: Text(
+                'Qté',
+                style: TextStyle(
+                  color: context.textFaint,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                'Description',
+                style: TextStyle(
+                  color: context.textFaint,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 78,
+              child: Text(
+                'Prix unit.',
+                style: TextStyle(
+                  color: context.textFaint,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
             const SizedBox(width: 32),
           ],
         ),
@@ -105,12 +150,29 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(color: AppColors.gold.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(
+            color: AppColors.gold.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Total HT', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 13)),
-              Text(fmtFcfa(_total), style: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 15)),
+              const Text(
+                'Total HT',
+                style: TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+              Text(
+                fmtFcfa(_total),
+                style: const TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
             ],
           ),
         ),
@@ -129,9 +191,16 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
             width: 44,
             child: TextField(
               controller: r.qte,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               style: TextStyle(color: context.textPrimary, fontSize: 13),
-              decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10)),
+              decoration: const InputDecoration(
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 10,
+                ),
+              ),
               onChanged: (_) => _notify(),
             ),
           ),
@@ -140,7 +209,13 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
             child: TextField(
               controller: r.desc,
               style: TextStyle(color: context.textPrimary, fontSize: 13),
-              decoration: const InputDecoration(hintText: 'Description', contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
+              decoration: const InputDecoration(
+                hintText: 'Description',
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+              ),
               onChanged: (_) => _notify(),
             ),
           ),
@@ -149,9 +224,16 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
             width: 78,
             child: TextField(
               controller: r.prix,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               style: TextStyle(color: context.textPrimary, fontSize: 13),
-              decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10)),
+              decoration: const InputDecoration(
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 10,
+                ),
+              ),
               onChanged: (_) => _notify(),
             ),
           ),
@@ -159,7 +241,11 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
             width: 32,
             child: IconButton(
               padding: EdgeInsets.zero,
-              icon: const Icon(Icons.close, size: 17, color: AppColors.textFaint),
+              icon: const Icon(
+                Icons.close,
+                size: 17,
+                color: AppColors.textFaint,
+              ),
               onPressed: _rows.length > 1 ? () => _removeRow(i) : null,
             ),
           ),
@@ -169,17 +255,19 @@ class LigneItemsEditorState extends State<LigneItemsEditor> {
   }
 }
 
-/// Formulaire de création d'un devis — client, objet, validité (jours),
-/// TVA 18% (appliquée automatiquement à la conversion en facture), et les
-/// lignes du document. Mirroir de `_open_devis_form` côté ordinateur.
-/// Le dépôt `DevisRepository` n'offre pas de mise à jour générale (seulement
-/// `create`, `updateStatut`, `delete`, `convertirEnFacture`) — ce formulaire
-/// ne sert donc qu'à la création, jamais à la modification d'un devis
-/// existant (voir le rapport de fin de tâche pour ce manque côté dépôt).
+/// Création et modification d’un devis non converti.
 class DevisFormSheet extends StatefulWidget {
+  final Devis? devis;
+  final List<LigneDocument> initialLines;
   final List<Client> clients;
   final VoidCallback onSaved;
-  const DevisFormSheet({super.key, required this.clients, required this.onSaved});
+  const DevisFormSheet({
+    super.key,
+    required this.clients,
+    required this.onSaved,
+    this.devis,
+    this.initialLines = const [],
+  });
 
   @override
   State<DevisFormSheet> createState() => _DevisFormSheetState();
@@ -210,6 +298,14 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
   @override
   void initState() {
     super.initState();
+    if (widget.devis != null) {
+      final d = widget.devis!;
+      _clientId = d.clientId;
+      _objetCtrl.text = d.objet;
+      _validiteCtrl.text = d.validiteJours.toString();
+      _appliquerTva = d.appliquerTva;
+      return;
+    }
     if (widget.clients.isNotEmpty) {
       _clientId = widget.clients.first.id;
     } else {
@@ -230,6 +326,7 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     int? clientId = _clientId;
     if (_quickMode) {
       final nom = _quickNomCtrl.text.trim();
@@ -246,7 +343,19 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
       showFormError(context, 'Ajoute au moins une ligne avec une description.');
       return;
     }
-    final validite = int.tryParse(_validiteCtrl.text.trim()) ?? 30;
+    final validite = int.tryParse(_validiteCtrl.text.trim());
+    if (validite == null ||
+        validite <= 0 ||
+        lignes.any(
+          (l) =>
+              !l.quantite.isFinite ||
+              !l.prixUnitaire.isFinite ||
+              l.quantite <= 0 ||
+              l.prixUnitaire < 0,
+        )) {
+      showFormError(context, 'Vérifie la validité, les quantités et les prix.');
+      return;
+    }
     setState(() => _saving = true);
     try {
       if (_quickMode) {
@@ -256,17 +365,29 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
         );
         clientId = client.id;
       }
-      await _repo.create(
-        clientId: clientId!,
-        objet: _objetCtrl.text.trim(),
-        validiteJours: validite,
-        appliquerTva: _appliquerTva,
-        lignes: lignes,
-      );
+      if (widget.devis == null) {
+        await _repo.create(
+          clientId: clientId!,
+          objet: _objetCtrl.text.trim(),
+          validiteJours: validite,
+          appliquerTva: _appliquerTva,
+          lignes: lignes,
+        );
+      } else {
+        await _repo.update(
+          widget.devis!,
+          clientId: clientId!,
+          objet: _objetCtrl.text.trim(),
+          validiteJours: validite,
+          appliquerTva: _appliquerTva,
+          lignes: lignes,
+        );
+      }
       if (!mounted) return;
       widget.onSaved();
     } catch (_) {
-      if (mounted) showFormError(context, 'Impossible d\'enregistrer ce devis.');
+      if (mounted)
+        showFormError(context, 'Impossible d\'enregistrer ce devis.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -277,7 +398,10 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Client *', style: TextStyle(color: context.textMuted, fontSize: 12)),
+        Text(
+          'Client *',
+          style: TextStyle(color: context.textMuted, fontSize: 12),
+        ),
         const SizedBox(height: 6),
         if (widget.clients.isNotEmpty) ...[
           _ClientModeToggle(
@@ -296,7 +420,9 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
           TextField(
             controller: _quickTelCtrl,
             keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(hintText: 'Téléphone (optionnel — utile pour l\'envoi WhatsApp)'),
+            decoration: const InputDecoration(
+              hintText: 'Téléphone (optionnel — utile pour l\'envoi WhatsApp)',
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -305,25 +431,58 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
           ),
         ] else
           DropdownButtonFormField<int>(
-            value: _clientId,
+            value: widget.clients.any((c) => c.id == _clientId)
+                ? _clientId
+                : null,
             dropdownColor: AppColors.surface,
             isExpanded: true,
-            hint: Text(widget.clients.isEmpty ? 'Aucun client — ajoute-en un d\'abord' : 'Choisir…', style: TextStyle(color: context.textFaint)),
-            items: [for (final c in widget.clients) DropdownMenuItem(value: c.id, child: Text(c.nom, style: TextStyle(color: context.textPrimary), overflow: TextOverflow.ellipsis))],
+            hint: Text(
+              widget.clients.isEmpty
+                  ? 'Aucun client — ajoute-en un d\'abord'
+                  : 'Choisir…',
+              style: TextStyle(color: context.textFaint),
+            ),
+            items: [
+              for (final c in widget.clients)
+                DropdownMenuItem(
+                  value: c.id,
+                  child: Text(
+                    c.nom,
+                    style: TextStyle(color: context.textPrimary),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
             onChanged: (v) => setState(() => _clientId = v),
           ),
         const SizedBox(height: 14),
         Text('Objet', style: TextStyle(color: context.textMuted, fontSize: 12)),
         const SizedBox(height: 6),
-        TextField(controller: _objetCtrl, decoration: const InputDecoration(hintText: 'Ex : Fourniture et pose de fenêtres aluminium')),
+        TextField(
+          controller: _objetCtrl,
+          decoration: const InputDecoration(
+            hintText: 'Ex : Fourniture et pose de fenêtres aluminium',
+          ),
+        ),
         const SizedBox(height: 14),
-        Text('Validité (jours)', style: TextStyle(color: context.textMuted, fontSize: 12)),
+        Text(
+          'Validité (jours)',
+          style: TextStyle(color: context.textMuted, fontSize: 12),
+        ),
         const SizedBox(height: 6),
-        TextField(controller: _validiteCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration()),
+        TextField(
+          controller: _validiteCtrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(),
+        ),
         const SizedBox(height: 10),
         Row(
           children: [
-            Switch(value: _appliquerTva, activeColor: AppColors.gold, onChanged: (v) => setState(() => _appliquerTva = v)),
+            Switch(
+              value: _appliquerTva,
+              activeColor: AppColors.gold,
+              onChanged: (v) => setState(() => _appliquerTva = v),
+            ),
             Expanded(
               child: GestureDetector(
                 onTap: () => setState(() => _appliquerTva = !_appliquerTva),
@@ -336,11 +495,25 @@ class _DevisFormSheetState extends State<DevisFormSheet> {
           ],
         ),
         const SizedBox(height: 8),
-        Text('Lignes du document', style: TextStyle(color: AppColors.gold, fontSize: 12, fontWeight: FontWeight.w700)),
+        Text(
+          'Lignes du document',
+          style: TextStyle(
+            color: AppColors.gold,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         const SizedBox(height: 8),
-        LigneItemsEditor(key: _linesKey, onTotalChanged: (t) => setState(() => _total = t)),
+        LigneItemsEditor(
+          key: _linesKey,
+          initialLines: widget.initialLines,
+          onTotalChanged: (t) => setState(() => _total = t),
+        ),
         const SizedBox(height: 20),
-        GoldButton(label: _saving ? 'Enregistrement…' : 'Enregistrer le devis', onPressed: _saving ? () {} : _save),
+        GoldButton(
+          label: _saving ? 'Enregistrement…' : 'Enregistrer le devis',
+          onPressed: _saving ? () {} : _save,
+        ),
       ],
     );
   }
@@ -365,14 +538,33 @@ class _ClientModeToggle extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(child: _segment(context, label: 'Client existant', selected: !quickMode, onTap: () => onChanged(false))),
-          Expanded(child: _segment(context, label: '+ Nouveau (rapide)', selected: quickMode, onTap: () => onChanged(true))),
+          Expanded(
+            child: _segment(
+              context,
+              label: 'Client existant',
+              selected: !quickMode,
+              onTap: () => onChanged(false),
+            ),
+          ),
+          Expanded(
+            child: _segment(
+              context,
+              label: '+ Nouveau (rapide)',
+              selected: quickMode,
+              onTap: () => onChanged(true),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _segment(BuildContext context, {required String label, required bool selected, required VoidCallback onTap}) {
+  Widget _segment(
+    BuildContext context, {
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
